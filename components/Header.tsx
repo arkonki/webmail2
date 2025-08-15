@@ -8,9 +8,10 @@ import { SunIcon } from './icons/SunIcon';
 import { MoonIcon } from './icons/MoonIcon';
 import { CogIcon } from './icons/CogIcon';
 import { QuestionMarkCircleIcon } from './icons/QuestionMarkCircleIcon';
+import { CloudSlashIcon } from './icons/CloudSlashIcon';
 
 const Header: React.FC = () => {
-  const { user, theme, toggleTheme, toggleSidebar, view, setView, logout, setIsShortcutsModalOpen } = useAppContext();
+  const { user, theme, toggleTheme, toggleSidebar, view, setView, logout, setIsShortcutsModalOpen, isOnline } = useAppContext();
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
 
@@ -57,6 +58,12 @@ const Header: React.FC = () => {
       </div>
       
       <div className="flex items-center space-x-2">
+         {!isOnline && (
+            <div className="flex items-center gap-2 text-sm text-yellow-800 bg-yellow-100 dark:text-yellow-100 dark:bg-yellow-900/50 px-3 py-1.5 rounded-full" title="You are currently offline.">
+                <CloudSlashIcon className="w-5 h-5" />
+                <span className="hidden md:inline">Offline</span>
+            </div>
+         )}
          <button onClick={toggleTheme} className="p-2 rounded-full hover:bg-gray-200 dark:hover:bg-gray-700" title={`Switch to ${theme === 'light' ? 'dark' : 'light'} mode`}>
             {theme === 'light' ? <MoonIcon className="w-6 h-6 text-gray-600"/> : <SunIcon className="w-6 h-6 text-yellow-400"/>}
          </button>

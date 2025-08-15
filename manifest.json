@@ -1,0 +1,15 @@
+{
+  "short_name": "Webmail",
+  "name": "Modern Webmail Client",
+  "icons": [
+    {
+      "src": "/logo.svg",
+      "type": "image/svg+xml",
+      "sizes": "192x192 512x512"
+    }
+  ],
+  "start_url": ".",
+  "display": "standalone",
+  "theme_color": "#0B57D0",
+  "background_color": "#f6f8fc"
+}

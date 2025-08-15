@@ -62,6 +62,7 @@ interface AppContextType {
   notificationPermission: NotificationPermission;
   isShortcutsModalOpen: boolean;
   shortcutTrigger: ShortcutTrigger | null;
+  isOnline: boolean;
   
   // Auth
   login: (email: string, pass: string) => void;
@@ -264,9 +265,21 @@ export const AppContextProvider: React.FC<{ children: ReactNode }> = ({ children
   const [isShortcutsModalOpen, setIsShortcutsModalOpen] = useState(false);
   const [keySequence, setKeySequence] = useState<string[]>([]);
   const [shortcutTrigger, setShortcutTrigger] = useState<ShortcutTrigger | null>(null);
+  const [isOnline, setIsOnline] = useState(navigator.onLine);
 
+  useEffect(() => {
+    const handleOnline = () => setIsOnline(true);
+    const handleOffline = () => setIsOnline(false);
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+    return () => {
+        window.removeEventListener('online', handleOnline);
+        window.removeEventListener('offline', handleOffline);
+    };
+  }, []);
   useEffect(() => { if ('Notification' in window) setNotificationPermission(Notification.permission); }, []);
   useEffect(() => { localStorage.setItem('appSettings', JSON.stringify(appSettings)); }, [appSettings]);
+  useEffect(() => { localStorage.setItem('emails', JSON.stringify(emails)); }, [emails]);
   useEffect(() => { localStorage.setItem('contacts', JSON.stringify(contacts)); }, [contacts]);
   useEffect(() => { localStorage.setItem('contactGroups', JSON.stringify(contactGroups)); }, [contactGroups]);
   useEffect(() => { localStorage.setItem('labels', JSON.stringify(labels)); }, [labels]);
@@ -285,7 +298,14 @@ export const AppContextProvider: React.FC<{ children: ReactNode }> = ({ children
     }
     
     setUser(currentUser);
-    setEmails(mockEmails);
+    
+    const savedEmails = localStorage.getItem('emails');
+    if (savedEmails) {
+        setEmails(JSON.parse(savedEmails));
+    } else {
+        setEmails(mockEmails);
+    }
+    
     setAppSettings(loadedSettings);
     setIsSetupComplete(hasCompletedSetup && !!primaryIdentity);
 
@@ -1278,7 +1298,7 @@ export const AppContextProvider: React.FC<{ children: ReactNode }> = ({ children
   }, [appSettings.notifications.enabled, notificationPermission, user, setEmails, setView, setCurrentSelectionCallback, setSelectedConversationId, markAsRead]);
 
   const contextValue: AppContextType = {
-    user, emails, conversations: allConversations, labels: sortedLabels, userFolders, folderTree, flattenedFolderTree, currentSelection, selectedConversationId, focusedConversationId, composeState, searchQuery, selectedConversationIds, theme, displayedConversations, isSidebarCollapsed, view, appSettings, contacts, contactGroups, selectedContactId, selectedGroupId, isLoading, isSetupComplete, notificationPermission, isShortcutsModalOpen, shortcutTrigger,
+    user, emails, conversations: allConversations, labels: sortedLabels, userFolders, folderTree, flattenedFolderTree, currentSelection, selectedConversationId, focusedConversationId, composeState, searchQuery, selectedConversationIds, theme, displayedConversations, isSidebarCollapsed, view, appSettings, contacts, contactGroups, selectedContactId, selectedGroupId, isLoading, isSetupComplete, notificationPermission, isShortcutsModalOpen, shortcutTrigger, isOnline,
     login, logout, checkUserSession,
     setCurrentSelection: setCurrentSelectionCallback, setSelectedConversationId, setSearchQuery,
     openCompose, closeCompose, toggleMinimizeCompose, sendEmail, cancelSend, saveDraft, deleteDraft,
