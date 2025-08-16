@@ -265,23 +265,65 @@ export const AppContextProvider = ({ children }: { children: ReactNode }): React
   }, []);
   useEffect(() => { if ('Notification' in window) setNotificationPermission(Notification.permission); }, []);
   
-  const saveToLocalStorage = useCallback((key: string, data: any) => {
-    try {
-        if(user) {
-            localStorage.setItem(`${user.email}-${key}`, JSON.stringify(data));
-        }
-    } catch (e) {
-        console.error(`Failed to save ${key} to localStorage`, e);
+  // --- Data Persistence ---
+  // Each piece of state gets its own useEffect hook for saving. This is more direct 
+  // and robust than using a shared helper function, as it avoids potential stale 
+  // closures and ensures data is always saved with the correct, current user info.
+  useEffect(() => {
+    if (user) {
+        try { localStorage.setItem(`${user.email}-appSettings`, JSON.stringify(appSettings)); }
+        catch (e) { console.error('Failed to save appSettings to localStorage', e); }
     }
-  }, [user]);
+  }, [user, appSettings]);
   
-  useEffect(() => { saveToLocalStorage('appSettings', appSettings); }, [appSettings, saveToLocalStorage]);
-  useEffect(() => { saveToLocalStorage('emails', emails); }, [emails, saveToLocalStorage]);
-  useEffect(() => { saveToLocalStorage('contacts', contacts); }, [contacts, saveToLocalStorage]);
-  useEffect(() => { saveToLocalStorage('contactGroups', contactGroups); }, [contactGroups, saveToLocalStorage]);
-  useEffect(() => { saveToLocalStorage('labels', labels); }, [labels, saveToLocalStorage]);
-  useEffect(() => { saveToLocalStorage('userFolders', userFolders); }, [userFolders, saveToLocalStorage]);
-  useEffect(() => { saveToLocalStorage('sidebarSectionOrder', sidebarSectionOrder); }, [sidebarSectionOrder, saveToLocalStorage]);
+  useEffect(() => {
+    if (user) {
+        try { localStorage.setItem(`${user.email}-emails`, JSON.stringify(emails)); }
+        catch (e) { console.error('Failed to save emails to localStorage', e); }
+    }
+  }, [user, emails]);
+
+  useEffect(() => {
+    if (user) {
+        try { localStorage.setItem(`${user.email}-contacts`, JSON.stringify(contacts)); }
+        catch (e) { console.error('Failed to save contacts to localStorage', e); }
+    }
+  }, [user, contacts]);
+
+  useEffect(() => {
+    if (user) {
+        try { localStorage.setItem(`${user.email}-contactGroups`, JSON.stringify(contactGroups)); }
+        catch (e) { console.error('Failed to save contactGroups to localStorage', e); }
+    }
+  }, [user, contactGroups]);
+  
+  useEffect(() => {
+    if (user) {
+        try { localStorage.setItem(`${user.email}-labels`, JSON.stringify(labels)); }
+        catch (e) { console.error('Failed to save labels to localStorage', e); }
+    }
+  }, [user, labels]);
+  
+  useEffect(() => {
+    if (user) {
+        try { localStorage.setItem(`${user.email}-userFolders`, JSON.stringify(userFolders)); }
+        catch (e) { console.error('Failed to save userFolders to localStorage', e); }
+    }
+  }, [user, userFolders]);
+
+  useEffect(() => {
+    if (user) {
+        try { localStorage.setItem(`${user.email}-sidebarSectionOrder`, JSON.stringify(sidebarSectionOrder)); }
+        catch (e) { console.error('Failed to save sidebarSectionOrder to localStorage', e); }
+    }
+  }, [user, sidebarSectionOrder]);
+
+  useEffect(() => {
+    if (user) {
+        try { localStorage.setItem(`${user.email}-isSetupComplete`, JSON.stringify(isSetupComplete)); }
+        catch (e) { console.error('Failed to save isSetupComplete to localStorage', e); }
+    }
+  }, [user, isSetupComplete]);
 
 
   const checkUserSession = useCallback(() => {
@@ -345,8 +387,6 @@ export const AppContextProvider = ({ children }: { children: ReactNode }): React
             });
 
             const newUser = { id: `user-${Date.now()}`, email, name: email.split('@')[0] };
-            setUser(newUser);
-            localStorage.setItem('sessionUser', JSON.stringify(newUser));
             
             setEmails([]);
             setLabels([]);
@@ -356,6 +396,10 @@ export const AppContextProvider = ({ children }: { children: ReactNode }): React
             setAppSettings(initialAppSettings);
             setSidebarSectionOrder(['folders', 'labels']);
             setIsSetupComplete(false);
+            
+            // Set user and session *after* clearing state to ensure clean start
+            setUser(newUser);
+            localStorage.setItem('sessionUser', JSON.stringify(newUser));
 
             setIsSyncing(true);
             addAppLog("Starting email sync with server...");
@@ -962,9 +1006,8 @@ const flattenedFolderTree = useMemo<FolderTreeNode[]>(() => {
     };
     setAppSettings(prev => ({...prev, identities: [newIdentity]}));
     setIsSetupComplete(true);
-    saveToLocalStorage('isSetupComplete', true);
     addToast("Welcome! Your settings have been saved.");
-  }, [user, addToast, saveToLocalStorage]);
+  }, [user, addToast]);
   
   const updateIdentity = useCallback((identity: Identity) => {
     setAppSettings(prev => ({...prev, identities: prev.identities.map(id => id.id === identity.id ? identity : id)}));
