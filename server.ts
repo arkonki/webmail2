@@ -1,4 +1,5 @@
-import express, { Express, Request, Response } from 'express';
+
+import express, { Request, Response } from 'express';
 import cors from 'cors';
 import { ImapFlow } from 'imapflow';
 import dotenv from 'dotenv';
@@ -6,7 +7,7 @@ import { simpleParser } from 'mailparser';
 
 dotenv.config();
 
-const app: Express = express();
+const app = express();
 const port = 3001;
 
 // Use a general CORS configuration for development to allow all origins.
@@ -79,48 +80,64 @@ app.post('/api/sync', async (req: Request, res: Response) => {
                 
                 let processedCount = 0;
                 for await (let msg of client.fetch(`${fetchFrom}:*`, { uid: true, flags: true, source: true, envelope: true })) {
-                    const parsed = await simpleParser(msg.source);
-                    processedCount++;
-                    console.log(`${logPrefix} Processing message UID ${msg.uid}, Subject: ${parsed.subject}`);
+                    try {
+                        const parsed = await simpleParser(msg.source);
+                        processedCount++;
+                        console.log(`${logPrefix} Processing message UID ${msg.uid}, Subject: ${parsed.subject}`);
 
-                    const normalizedSubject = (parsed.subject || '')
-                        .replace(/^(Re|Fwd|Fw):\s*/i, '')
-                        .trim();
+                        const normalizedSubject = (parsed.subject || '')
+                            .replace(/^(Re|Fwd|Fw):\s*/i, '')
+                            .trim();
 
-                    const labelIds = [];
-                    if (msg.flags.has('\\Flagged')) {
-                        labelIds.push('Starred');
+                        const labelIds = [];
+                        if (msg.flags.has('\\Flagged')) {
+                            labelIds.push('Starred');
+                        }
+                        
+                        const getAddress = (addressObject: any) => {
+                            if (!addressObject || !addressObject.value || addressObject.value.length === 0) {
+                                return { address: 'unknown@example.com', name: 'Unknown' };
+                            }
+                            const value = addressObject.value[0];
+                            return {
+                                address: value.address || 'undisclosed-recipients@example.com',
+                                name: value.name || (value.address ? value.address.split('@')[0] : 'Unknown')
+                            };
+                        };
+                        
+                        const sender = getAddress(parsed.from);
+                        const recipient = getAddress(parsed.to);
+                        // If recipient is undisclosed, fall back to the logged-in user's email
+                        const recipientEmail = recipient.address === 'undisclosed-recipients@example.com' ? email : recipient.address;
+
+
+                        emails.push({
+                            id: msg.uid.toString(),
+                            conversationId: normalizedSubject || `conv-${parsed.messageId || msg.uid}`,
+                            senderName: sender.name,
+                            senderEmail: sender.address,
+                            recipientEmail: recipientEmail,
+                            subject: parsed.subject || '(no subject)',
+                            body: parsed.html || parsed.textAsHtml || parsed.text || '',
+                            snippet: (parsed.text || '').substring(0, 120).replace(/\s+/g, ' ').trim(),
+                            timestamp: (parsed.date || new Date()).toISOString(),
+                            isRead: msg.flags.has('\\Seen'),
+                            folderId: 'Inbox',
+                            labelIds: labelIds,
+                            attachments: (parsed.attachments || []).map(att => ({
+                                fileName: att.filename || 'untitled',
+                                fileSize: att.size || 0,
+                                mimeType: att.contentType || 'application/octet-stream',
+                                url: `data:${att.contentType || 'application/octet-stream'};base64,${att.content?.toString('base64') || ''}`
+                            })),
+                            messageId: parsed.messageId,
+                        });
+                    } catch (parseError: any) {
+                        console.error(`${logPrefix} SKIPPING: Failed to parse message UID ${msg.uid}. Error:`, parseError.message);
+                        // Continue to the next message instead of crashing
                     }
-                    
-                    const fromAddressObject = Array.isArray(parsed.from) ? parsed.from[0] : parsed.from;
-                    const sender = fromAddressObject?.value[0] || { address: 'unknown', name: 'Unknown' };
-
-                    const toAddressObject = Array.isArray(parsed.to) ? parsed.to[0] : parsed.to;
-                    const recipient = toAddressObject?.value[0];
-
-                    emails.push({
-                        id: msg.uid.toString(),
-                        conversationId: normalizedSubject || `conv-${parsed.messageId || msg.uid}`,
-                        senderName: sender.name || sender.address?.split('@')[0],
-                        senderEmail: sender.address,
-                        recipientEmail: recipient?.address || email,
-                        subject: parsed.subject || '(no subject)',
-                        body: parsed.html || parsed.textAsHtml || '', // Prefer HTML body
-                        snippet: (parsed.text || '').substring(0, 120).replace(/\s+/g, ' ').trim(),
-                        timestamp: parsed.date?.toISOString(),
-                        isRead: msg.flags.has('\\Seen'),
-                        folderId: 'Inbox',
-                        labelIds: labelIds,
-                        attachments: (parsed.attachments || []).map(att => ({
-                            fileName: att.filename,
-                            fileSize: att.size,
-                            mimeType: att.contentType,
-                            url: `data:${att.contentType};base64,${att.content.toString('base64')}`
-                        })),
-                        messageId: parsed.messageId,
-                    });
                 }
-                 console.log(`${logPrefix} Finished processing. Total emails parsed: ${processedCount}`);
+                 console.log(`${logPrefix} Finished processing loop. Total emails successfully parsed: ${emails.length}`);
             } else {
                 console.log(`${logPrefix} Mailbox does not exist or is empty.`);
             }
