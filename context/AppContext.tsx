@@ -73,7 +73,7 @@ interface AppContextType {
   login: (email: string, pass: string) => Promise<void>;
   logout: () => void;
   checkUserSession: () => void;
-  getFolderPathFor: (specialUse: string, fallbackName: string) => string;
+  getFolderPathFor: (folderType: 'sent' | 'drafts' | 'trash' | 'spam' | 'archive') => string;
   
   // Mail Navigation
   setCurrentSelection: (type: SelectionType, id: string) => void;
@@ -142,6 +142,7 @@ interface AppContextType {
   createTemplate: (name: string, body: string) => void;
   updateTemplate: (id: string, updates: Partial<Omit<Template, 'id'>>) => void;
   deleteTemplate: (id: string) => void;
+  updateFolderMappings: (mappings: Record<string, string>) => void;
 
   // Label Management
   createLabel: (name: string, color: string) => void;
@@ -200,6 +201,7 @@ const initialAppSettings: AppSettings = {
   blockExternalImages: true,
   templates: [],
   displayDensity: 'comfortable',
+  folderMappings: {},
 };
 
 const AppContext = createContext<AppContextType | undefined>(undefined);
@@ -314,6 +316,7 @@ export const AppContextProvider = ({ children }: { children: ReactNode }): React
         autoResponder: { ...initialAppSettings.autoResponder, ...parsedSettings.autoResponder },
         sendDelay: { ...initialAppSettings.sendDelay, ...parsedSettings.sendDelay },
         notifications: { ...initialAppSettings.notifications, ...parsedSettings.notifications },
+        folderMappings: { ...initialAppSettings.folderMappings, ...parsedSettings.folderMappings },
       };
 
       setAppSettings(mergedSettings);
@@ -332,13 +335,28 @@ export const AppContextProvider = ({ children }: { children: ReactNode }): React
     setTimeout(() => setIsLoading(false), 500);
   }, [addAppLog]);
 
-  const getFolderPathFor = useCallback((specialUse: string, fallbackName: string): string => {
-      const mailbox = mailboxes.find(m => m.specialUse === specialUse);
-      if (mailbox) return mailbox.path;
-      // Fallback for servers that might not report special-use flags correctly.
-      const fallbackMailbox = mailboxes.find(m => m.name.toLowerCase() === fallbackName.toLowerCase());
-      return fallbackMailbox?.path || fallbackName;
-  }, [mailboxes]);
+  const getFolderPathFor = useCallback((folderType: 'sent' | 'drafts' | 'trash' | 'spam' | 'archive'): string => {
+      const mappedPath = appSettings.folderMappings[folderType];
+      if (mappedPath && mailboxes.some(m => m.path === mappedPath)) {
+        return mappedPath;
+      }
+  
+      // Fallback logic if mapping is invalid or not set
+      const specialUseMap = { sent: '\\Sent', drafts: '\\Drafts', trash: '\\Trash', spam: '\\Junk', archive: '\\Archive' };
+      const fallbackNameMap = { sent: 'Sent', drafts: 'Drafts', trash: 'Trash', spam: 'Spam', archive: 'Archive' };
+      
+      const specialUse = specialUseMap[folderType];
+      const fallbackName = fallbackNameMap[folderType];
+  
+      const mailboxByFlag = mailboxes.find(m => m.specialUse === specialUse);
+      if (mailboxByFlag) return mailboxByFlag.path;
+  
+      const mailboxByName = mailboxes.find(m => m.name.toLowerCase() === fallbackName.toLowerCase());
+      if (mailboxByName) return mailboxByName.path;
+      
+      // Final fallback to just the name, e.g. for folder creation
+      return fallbackName;
+  }, [appSettings.folderMappings, mailboxes]);
 
   const login = useCallback(async (email: string, pass: string) => {
     setIsLoading(true);
@@ -384,8 +402,39 @@ export const AppContextProvider = ({ children }: { children: ReactNode }): React
                 });
                 const foldersData = await foldersResponse.json();
                 if (foldersResponse.ok && foldersData.success) {
-                    setMailboxes(foldersData.mailboxes);
-                    addAppLog(`Loaded ${foldersData.mailboxes.length} mailboxes from server.`);
+                    const fetchedMailboxes = foldersData.mailboxes as Mailbox[];
+                    setMailboxes(fetchedMailboxes);
+                    addAppLog(`Loaded ${fetchedMailboxes.length} mailboxes from server.`);
+
+                    // Create initial default folder mappings based on server flags
+                    const initialMappings: Record<string, string> = {};
+                    const systemFolderMap = {
+                        sent: { specialUse: '\\Sent', name: 'Sent' },
+                        drafts: { specialUse: '\\Drafts', name: 'Drafts' },
+                        trash: { specialUse: '\\Trash', name: 'Trash' },
+                        spam: { specialUse: '\\Junk', name: 'Spam' },
+                        archive: { specialUse: '\\Archive', name: 'Archive' },
+                    };
+
+                    fetchedMailboxes.forEach((mailbox) => {
+                        for (const [key, value] of Object.entries(systemFolderMap)) {
+                            if (mailbox.specialUse === value.specialUse) {
+                                initialMappings[key] = mailbox.path;
+                            }
+                        }
+                    });
+
+                    // Fallback to matching by name if specialUse flags are missing
+                    for (const [key, value] of Object.entries(systemFolderMap)) {
+                        if (!initialMappings[key]) {
+                            const fallback = fetchedMailboxes.find((m) => m.name.toLowerCase() === value.name.toLowerCase());
+                            if (fallback) {
+                                initialMappings[key] = fallback.path;
+                            }
+                        }
+                    }
+                    setAppSettings(prev => ({ ...prev, folderMappings: initialMappings }));
+
                 } else {
                     addAppLog(`Mailbox loading failed: ${foldersData.message || "Unknown error"}`, 'error');
                     addToast(foldersData.message || "Failed to load mailboxes.", { duration: 5000 });
@@ -542,7 +591,9 @@ export const AppContextProvider = ({ children }: { children: ReactNode }): React
             }
         });
     } else if (currentSelection.type === 'folder') {
-      filtered = allConversations.filter(c => c.folderId === currentSelection.id);
+      const systemFolderKey = Object.entries(SystemFolder).find(([, value]) => value === currentSelection.id)?.[0].toLowerCase();
+      const folderPath = systemFolderKey ? getFolderPathFor(systemFolderKey as any) : currentSelection.id;
+      filtered = allConversations.filter(c => c.folderId === folderPath);
     } else if (currentSelection.type === 'label') {
         if(currentSelection.id === SystemLabel.SNOOZED) {
             filtered = allConversations.filter(c => c.isSnoozed);
@@ -551,7 +602,7 @@ export const AppContextProvider = ({ children }: { children: ReactNode }): React
         }
     }
     return filtered;
-  }, [allConversations, currentSelection, searchQuery]);
+  }, [allConversations, currentSelection, searchQuery, getFolderPathFor]);
   
   const folderTree = useMemo<FolderTreeNode[]>(() => {
     const userCreatedFolders = mailboxes.filter(m => !m.specialUse && m.path.toUpperCase() !== 'INBOX');
@@ -727,7 +778,7 @@ const flattenedFolderTree = useMemo<FolderTreeNode[]>(() => {
                 senderName: user.name, senderEmail: user.email, recipientEmail: to, cc, bcc, subject, body,
                 snippet: body.replace(/<[^>]*>?/gm, '').substring(0, 100),
                 timestamp: new Date().toISOString(), isRead: true,
-                folderId: getFolderPathFor('\\Sent', SystemFolder.SENT),
+                folderId: getFolderPathFor('sent'),
                 labelIds: [],
                 attachments: attachments.map(f => ({fileName: f.name, fileSize: f.size, mimeType: f.type})),
             };
@@ -755,7 +806,7 @@ const flattenedFolderTree = useMemo<FolderTreeNode[]>(() => {
         cc: data.cc, bcc: data.bcc, subject: data.subject, body: data.body,
         snippet: data.body.replace(/<[^>]*>?/gm, '').substring(0, 100),
         timestamp: new Date().toISOString(), isRead: true,
-        folderId: getFolderPathFor('\\Drafts', SystemFolder.DRAFTS),
+        folderId: getFolderPathFor('drafts'),
         labelIds: [],
       };
       
@@ -834,31 +885,30 @@ const flattenedFolderTree = useMemo<FolderTreeNode[]>(() => {
         });
     }
       
-    const trashPath = getFolderPathFor('\\Trash', SystemFolder.TRASH);
-    const isTrash = currentSelection.id === trashPath;
+    const isCurrentlyInTrashView = currentSelection.type === 'folder' && currentSelection.id === SystemFolder.TRASH;
 
-    if (isTrash) {
+    if (isCurrentlyInTrashView) {
       setEmails(prev => prev.filter(e => !conversationIds.includes(e.conversationId)));
       addToast(`${conversationIds.length} conversation(s) permanently deleted.`);
     } else {
-      moveConversations(conversationIds, trashPath);
+      moveConversations(conversationIds, getFolderPathFor('trash'));
     }
   }, [currentSelection, moveConversations, addToast, emails, getFolderPathFor]);
 
   const archiveConversation = useCallback((conversationIds: string[]) => {
-      let archiveFolder = mailboxes.find(m => m.name.toLowerCase() === 'archive');
-      if (archiveFolder) {
-        moveConversations(conversationIds, archiveFolder.path)
+      const archivePath = getFolderPathFor('archive');
+      if (mailboxes.some(m => m.path === archivePath)) {
+        moveConversations(conversationIds, archivePath)
       } else {
         addToast("Please create an 'Archive' folder first to use this feature.", {duration: 4000});
       }
-  }, [moveConversations, mailboxes, addToast]);
+  }, [moveConversations, mailboxes, addToast, getFolderPathFor]);
 
   const markAsRead = useCallback((conversationId: string) => { setEmails(prev => prev.map(e => e.conversationId === conversationId ? { ...e, isRead: true } : e)); }, []);
   const markAsUnread = useCallback((conversationIds: string[]) => { setEmails(prev => prev.map(e => conversationIds.includes(e.conversationId) ? { ...e, isRead: false } : e)); addToast(`Marked ${conversationIds.length} item(s) as unread.`); if (conversationIds.includes(selectedConversationId || '')) setSelectedConversationId(null); }, [addToast, selectedConversationId]);
   
   const markAsSpam = useCallback((conversationIds: string[]) => {
-    moveConversations(conversationIds, getFolderPathFor('\\Junk', SystemFolder.SPAM));
+    moveConversations(conversationIds, getFolderPathFor('spam'));
   }, [moveConversations, getFolderPathFor]);
   
   const markAsNotSpam = useCallback((conversationIds: string[]) => {
@@ -877,25 +927,26 @@ const flattenedFolderTree = useMemo<FolderTreeNode[]>(() => {
   const createTemplate = useCallback((name: string, body: string) => { const newTemplate = { id: `template-${Date.now()}`, name, body }; setAppSettings(prev => ({ ...prev, templates: [...prev.templates, newTemplate] })); addToast(`Template "${name}" created.`); }, [addToast]);
   const updateTemplate = useCallback((id: string, updates: Partial<Omit<Template, 'id'>>) => { setAppSettings(prev => ({ ...prev, templates: prev.templates.map(t => t.id === id ? {...t, ...updates} : t) })); addToast("Template updated."); }, [addToast]);
   const deleteTemplate = useCallback((id: string) => { setAppSettings(prev => ({ ...prev, templates: prev.templates.filter(t => t.id !== id) })); addToast("Template deleted."); }, [addToast]);
+  const updateFolderMappings = useCallback((mappings: Record<string, string>) => { setAppSettings(prev => ({...prev, folderMappings: mappings})); addToast("System folder mappings updated."); }, [addToast]);
 
   const snoozeConversation = useCallback((conversationIds: string[], until: Date) => {
-    let archiveFolder = mailboxes.find(m => m.name.toLowerCase() === 'archive');
+    let archiveFolder = getFolderPathFor('archive');
     setEmails(prev => prev.map(e => {
         if(conversationIds.includes(e.conversationId)) {
             const newLabelIds = [...new Set([...e.labelIds, SystemLabel.SNOOZED])];
-            return {...e, snoozedUntil: until.toISOString(), folderId: archiveFolder?.path || 'INBOX', labelIds: newLabelIds};
+            return {...e, snoozedUntil: until.toISOString(), folderId: archiveFolder || 'INBOX', labelIds: newLabelIds};
         }
         return e;
     }));
     addToast(`${conversationIds.length} conversation(s) snoozed.`);
     deselectAllConversations();
     if (conversationIds.includes(selectedConversationId || '')) setSelectedConversationId(null);
-  }, [addToast, deselectAllConversations, selectedConversationId, mailboxes]);
+  }, [addToast, deselectAllConversations, selectedConversationId, getFolderPathFor]);
   
   const unsubscribeFromSender = useCallback((senderEmail: string) => {
     addRule({
         condition: { field: 'sender', operator: 'contains', value: senderEmail },
-        action: { type: 'moveToFolder', folderId: getFolderPathFor('\\Trash', SystemFolder.TRASH) }
+        action: { type: 'moveToFolder', folderId: getFolderPathFor('trash') }
     });
     addToast(`Unsubscribed from ${senderEmail}. Future messages will be moved to Trash.`);
   }, [addRule, addToast, getFolderPathFor]);
@@ -954,8 +1005,8 @@ const flattenedFolderTree = useMemo<FolderTreeNode[]>(() => {
 
     const newKeySequence = [...keySequence, e.key];
     const sequenceStr = newKeySequence.join('');
-    if (sequenceStr === 'gi') { _setCurrentSelection({type: 'folder', id: 'INBOX'}); setKeySequence([]); return; }
-    if (sequenceStr === 'gs') { _setCurrentSelection({type: 'folder', id: getFolderPathFor('\\Sent', SystemFolder.SENT)}); setKeySequence([]); return; }
+    if (sequenceStr === 'gi') { _setCurrentSelection({type: 'folder', id: SystemFolder.INBOX}); setKeySequence([]); return; }
+    if (sequenceStr === 'gs') { _setCurrentSelection({type: 'folder', id: SystemFolder.SENT}); setKeySequence([]); return; }
     
     if ('gs'.startsWith(sequenceStr)) { setKeySequence(newKeySequence); } else { setKeySequence([]); }
 
@@ -1137,7 +1188,7 @@ const flattenedFolderTree = useMemo<FolderTreeNode[]>(() => {
     moveConversations, toggleLabel, applyLabel, removeLabel, deleteConversation, archiveConversation, markAsRead, markAsUnread, markAsSpam, markAsNotSpam, snoozeConversation, unsnoozeConversation, unsubscribeFromSender,
     toggleConversationSelection, selectAllConversations, deselectAllConversations, bulkDelete, bulkMarkAsRead, bulkMarkAsUnread,
     toggleTheme, toggleSidebar, reorderSidebarSections, handleEscape, navigateConversationList, openFocusedConversation, setView, setIsShortcutsModalOpen, handleKeyboardShortcut, clearShortcutTrigger, setIsDraggingEmail, addAppLog,
-    updateSignature, updateAutoResponder, addRule, deleteRule, updateSendDelay, completeFirstTimeSetup, updateIdentity, requestNotificationPermission, updateNotificationSettings, updateConversationView, updateBlockExternalImages, updateDisplayDensity, createTemplate, updateTemplate, deleteTemplate,
+    updateSignature, updateAutoResponder, addRule, deleteRule, updateSendDelay, completeFirstTimeSetup, updateIdentity, requestNotificationPermission, updateNotificationSettings, updateConversationView, updateBlockExternalImages, updateDisplayDensity, createTemplate, updateTemplate, deleteTemplate, updateFolderMappings,
     createLabel, updateLabel, deleteLabel, reorderLabel,
     createFolder, updateFolder, deleteFolder, getFolderDescendants, folderTree, flattenedFolderTree, reorderFolder,
     addContact, updateContact, deleteContact, setSelectedContactId, importContacts,

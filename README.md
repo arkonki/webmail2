@@ -169,3 +169,58 @@ For a production environment, it is highly recommended to secure your site with 
     ```
 
 Follow the on-screen prompts. Certbot will also set up a cron job for automatic certificate renewal. After it's done, your site will be secure and available at `https://your-domain.com`.
+
+## 5. Deployment on Shared Hosting (FreeBSD, No Sudo Access)
+
+Deploying on a shared hosting environment where you do not have `sudo` access requires a different approach, as you cannot install system-wide software or modify the main Apache configuration. The best method is to use the tools provided by your hosting provider, often through a control panel like **cPanel**.
+
+### Step 1: Upload Your Project Files
+
+1.  On your local machine, run the build command to generate the frontend assets:
+    ```bash
+    npm run build
+    ```
+2.  Upload the **entire project directory** (including `node_modules`, `dist`, `server`, `package.json`, etc.) to your server using an FTP client or the control panel's File Manager. A common location is inside your `public_html` directory or a subdirectory for your domain.
+
+### Step 2: Set Up the Node.js Application in cPanel
+
+Most modern shared hosting providers have a dedicated tool for running Node.js applications.
+
+1.  Log in to your cPanel account.
+2.  Find and open the **"Setup Node.js App"** tool.
+3.  Click **"Create Application"**.
+4.  Fill out the form:
+    *   **Node.js version**: Select the newest version available (e.g., 18.x or 20.x).
+    *   **Application mode**: Set to "production".
+    *   **Application root**: Browse and select the root directory of your project (e.g., `/home/youruser/public_html/webmail-client`).
+    *   **Application startup file**: Enter `server/index.ts`.
+    *   **Application URL**: Select the domain or subdomain you want to use.
+5.  Click **"Create"**. The system will start your application on a private port and automatically configure Apache to proxy requests from your public URL to your app.
+
+### Step 3: Install Dependencies
+
+1.  After the application is created, the control panel will show its details.
+2.  Find and click the **"NPM Install"** button. This will execute `npm install` on the server, ensuring all dependencies are correctly installed for the server's environment.
+3.  Click **"Restart"** at the top of the page to restart your application with the new dependencies.
+
+### Step 4: Configure `.htaccess` for Client-Side Routing
+
+The cPanel setup automatically handles proxying the `/api/` routes to your backend. However, you need to ensure the frontend's client-side routing works correctly.
+
+1.  Using the File Manager in cPanel, navigate to the `dist` folder inside your project directory.
+2.  Create or edit the `.htaccess` file in the `dist` folder.
+3.  Add the following content:
+
+    ```apache
+    <IfModule mod_rewrite.c>
+      RewriteEngine On
+      # Don't rewrite files or directories that exist
+      RewriteCond %{REQUEST_FILENAME} -f [OR]
+      RewriteCond %{REQUEST_FILENAME} -d
+      RewriteRule ^ - [L]
+      # Rewrite everything else to index.html to allow React Router to handle it
+      RewriteRule ^ index.html [L]
+    </IfModule>
+    ```
+
+This configuration ensures that any direct navigation to a URL like `your-domain.com/settings` is handled by your React application's `index.html` file, allowing React Router to manage the view. Your application should now be fully functional on your shared hosting account.

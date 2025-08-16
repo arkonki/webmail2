@@ -36,6 +36,55 @@ const FolderRow: React.FC<{
     );
 };
 
+const SystemFolderMapper: React.FC = () => {
+    const { appSettings, updateFolderMappings, mailboxes } = useAppContext();
+
+    const systemFoldersToMap = [
+        { key: 'sent', label: 'Sent Mail' },
+        { key: 'drafts', label: 'Drafts' },
+        { key: 'trash', label: 'Trash' },
+        { key: 'spam', label: 'Spam' },
+        { key: 'archive', label: 'Archive' },
+    ];
+
+    const handleMappingChange = (key: string, path: string) => {
+        const newMappings = { ...appSettings.folderMappings, [key]: path };
+        if (path === '') {
+            delete newMappings[key]; // Allow reverting to automatic
+        }
+        updateFolderMappings(newMappings);
+    };
+
+    return (
+        <div className="mt-8 pt-6 border-t border-outline dark:border-dark-outline">
+            <h3 className="text-lg font-semibold text-gray-800 dark:text-gray-200 mb-2">System Folder Assignments</h3>
+            <p className="text-sm text-gray-500 dark:text-gray-400 mb-4">
+                Choose which of your mail folders should be used for special purposes like Sent items or Trash. Select "Automatic" to let the app decide based on server settings.
+            </p>
+            <div className="space-y-4 max-w-md">
+                {systemFoldersToMap.map(({ key, label }) => (
+                    <div key={key}>
+                        <label htmlFor={`folder-mapping-${key}`} className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{label}</label>
+                        <select
+                            id={`folder-mapping-${key}`}
+                            value={appSettings.folderMappings[key] || ''}
+                            onChange={(e) => handleMappingChange(key, e.target.value)}
+                            className="w-full p-2 border rounded-md bg-gray-50 dark:bg-dark-surface text-on-surface dark:text-dark-on-surface dark:border-dark-outline"
+                        >
+                            <option value="">-- Automatic --</option>
+                            {mailboxes.map(m => (
+                                <option key={m.path} value={m.path}>
+                                    {m.path}
+                                </option>
+                            ))}
+                        </select>
+                    </div>
+                ))}
+            </div>
+        </div>
+    );
+}
+
 const FolderSettings: React.FC = () => {
     const { userFolders, deleteFolder, flattenedFolderTree } = useAppContext();
     const [isModalOpen, setIsModalOpen] = useState(false);
@@ -77,6 +126,9 @@ const FolderSettings: React.FC = () => {
                     ))
                 )}
             </div>
+            
+            <SystemFolderMapper />
+
             {isModalOpen && (
                 <FolderModal
                     isOpen={isModalOpen}

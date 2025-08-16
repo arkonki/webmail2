@@ -179,6 +179,7 @@ export interface AppSettings {
   blockExternalImages: boolean;
   templates: Template[];
   displayDensity: DisplayDensity;
+  folderMappings: Record<string, string>;
 }
 
 export interface AppLog {
