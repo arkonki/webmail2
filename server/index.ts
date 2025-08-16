@@ -1,13 +1,14 @@
+/// <reference types="node" />
 
-import express, { Request as ExpressRequest, Response as ExpressResponse, NextFunction } from 'express';
+import express from 'express';
 import cors from 'cors';
 import { ImapFlow } from 'imapflow';
 import dotenv from 'dotenv';
 import { simpleParser } from 'mailparser';
 import nodemailer from 'nodemailer';
+import Mail from 'nodemailer/lib/mailer';
 import jwt from 'jsonwebtoken';
 import crypto from 'crypto';
-import { process } from 'process';
 
 dotenv.config();
 
@@ -70,7 +71,7 @@ app.use(cors());
 app.use(express.json({ limit: '10mb' }));
 
 // --- Authentication Middleware ---
-const authMiddleware = (req: ExpressRequest, res: ExpressResponse, next: NextFunction) => {
+const authMiddleware = (req: express.Request, res: express.Response, next: express.NextFunction) => {
     const authHeader = req.headers.authorization;
     if (!authHeader || !authHeader.startsWith('Bearer ')) {
         return res.status(401).json({ success: false, message: 'Authorization token is required.' });
@@ -89,9 +90,26 @@ const authMiddleware = (req: ExpressRequest, res: ExpressResponse, next: NextFun
 // In-memory store for scheduled jobs. In a real production app, this should be a persistent store like Redis.
 const scheduledJobs = new Map<string, NodeJS.Timeout>();
 
+// Helper to build raw email source for appending to IMAP
+const buildRawMessage = (options: Mail.Options): Promise<Buffer> => {
+    const transporter = nodemailer.createTransport({ streamTransport: true });
+    return new Promise((resolve, reject) => {
+        transporter.sendMail(options, (err, info) => {
+            if (err) {
+                return reject(err);
+            }
+            const stream = info.message as NodeJS.ReadableStream;
+            const chunks: Buffer[] = [];
+            stream.on('data', (chunk) => chunks.push(chunk));
+            stream.on('end', () => resolve(Buffer.concat(chunks)));
+            stream.on('error', (err) => reject(err));
+        });
+    });
+};
+
 // --- API Endpoints ---
 
-app.post('/api/login', async (req: ExpressRequest, res: ExpressResponse) => {
+app.post('/api/login', async (req: express.Request, res: express.Response) => {
     const { email, password } = req.body;
     if (!email || !password) {
         return res.status(400).json({ success: false, message: 'Email and password are required.' });
@@ -117,7 +135,7 @@ app.post('/api/login', async (req: ExpressRequest, res: ExpressResponse) => {
     }
 });
 
-app.post('/api/folders', authMiddleware, async (req: ExpressRequest, res: ExpressResponse) => {
+app.post('/api/folders', authMiddleware, async (req: express.Request, res: express.Response) => {
     const { email, password } = req.auth!;
     const logPrefix = `[FOLDERS FOR ${email}]`;
 
@@ -160,7 +178,7 @@ app.post('/api/folders', authMiddleware, async (req: ExpressRequest, res: Expres
     }
 });
 
-app.post('/api/sync', authMiddleware, async (req: ExpressRequest, res: ExpressResponse) => {
+app.post('/api/sync', authMiddleware, async (req: express.Request, res: express.Response) => {
     const { email, password } = req.auth!;
     const logPrefix = `[SYNC FOR ${email}]`;
     const client = new ImapFlow({
@@ -219,8 +237,7 @@ app.post('/api/sync', authMiddleware, async (req: ExpressRequest, res: ExpressRe
     }
 });
 
-// Note: test-connection remains unprotected as it's a developer tool for explicit password testing.
-app.post('/api/test-connection', async (req: ExpressRequest, res: ExpressResponse) => {
+app.post('/api/test-connection', async (req: express.Request, res: express.Response) => {
     const { email, password } = req.body;
     if (!email || !password) return res.status(400).json({ success: false, message: 'Email and password are required.' });
     const client = new ImapFlow({ host: 'mail.veebimajutus.ee', port: 993, secure: true, auth: { user: email, pass: password }, logger: false });
@@ -235,15 +252,18 @@ app.post('/api/test-connection', async (req: ExpressRequest, res: ExpressRespons
     }
 });
 
-app.post('/api/send', authMiddleware, async (req: ExpressRequest, res: ExpressResponse) => {
+app.post('/api/send', authMiddleware, async (req: express.Request, res: express.Response) => {
     const { email, password } = req.auth!;
-    const { from, to, cc, bcc, subject, body, attachments } = req.body;
+    const { from, to, cc, bcc, subject, body, attachments, sentFolder } = req.body;
+
     if (!to) return res.status(400).json({ success: false, message: 'Recipient is required.' });
+    if (!sentFolder) return res.status(400).json({ success: false, message: 'Sent folder path is required.' });
 
     const transporter = nodemailer.createTransport({
         host: 'mail.veebimajutus.ee', port: 465, secure: true,
         auth: { user: email, pass: password },
     });
+
     const mailOptions = {
         from, to, cc, bcc, subject, html: body,
         attachments: (attachments || []).map((att: any) => ({
@@ -251,34 +271,97 @@ app.post('/api/send', authMiddleware, async (req: ExpressRequest, res: ExpressRe
             encoding: 'base64', contentType: att.contentType,
         })),
     };
+
     try {
-        await transporter.sendMail(mailOptions);
-        res.json({ success: true, message: 'Email sent successfully.' });
+        const info = await transporter.sendMail(mailOptions);
+
+        // Append to sent folder
+        const rawMessage = await buildRawMessage(mailOptions);
+        const imapClient = new ImapFlow({
+            host: 'mail.veebimajutus.ee', port: 993, secure: true,
+            auth: { user: email, pass: password },
+            logger: false,
+        });
+
+        await imapClient.connect();
+        try {
+            console.log(`[SEND FOR ${email}] Appending message to ${sentFolder}`);
+            const appendResult = await imapClient.append(sentFolder, rawMessage, ['\\Seen']);
+            if (!appendResult) {
+                throw new Error('IMAP append command failed and returned false.');
+            }
+            const newUid = appendResult.uidset.toString();
+            console.log(`[SEND FOR ${email}] Message appended. UID: ${newUid}`);
+
+            const newEmail = {
+                id: newUid,
+                conversationId: (subject || '').replace(/^(Re|Fwd|Fw):\s*/i, '').trim() || `conv-${info.messageId || Date.now()}`,
+                senderName: (from || email).split('<')[0].replace(/"/g, '').trim(),
+                senderEmail: email, recipientEmail: to, cc, bcc,
+                subject: subject || '(no subject)',
+                body: body,
+                snippet: body.replace(/<[^>]*>?/gm, '').substring(0, 120).replace(/\s+/g, ' ').trim(),
+                timestamp: new Date().toISOString(), isRead: true, folderId: sentFolder,
+                labelIds: [],
+                attachments: (attachments || []).map((att: any) => ({
+                    fileName: att.filename,
+                    fileSize: Buffer.from(att.content, 'base64').length,
+                    mimeType: att.contentType,
+                })),
+                messageId: info.messageId,
+            };
+            res.json({ success: true, message: 'Email sent and saved successfully.', sentEmail: newEmail });
+
+        } catch (appendError: any) {
+            console.error(`[SEND FOR ${email}] FAILED TO APPEND to ${sentFolder}:`, appendError);
+            res.status(200).json({ success: true, message: 'Email sent, but failed to save to Sent folder.' });
+        } finally {
+            if (imapClient.usable) await imapClient.logout();
+        }
     } catch (error: any) {
         res.status(500).json({ success: false, message: `Failed to send email: ${error.message}` });
     }
 });
 
-app.post('/api/schedule-send', authMiddleware, async (req: ExpressRequest, res: ExpressResponse) => {
+app.post('/api/schedule-send', authMiddleware, async (req: express.Request, res: express.Response) => {
     const { email, password } = req.auth!;
-    const { from, to, cc, bcc, subject, body, attachments, scheduleDate } = req.body;
+    const { from, to, cc, bcc, subject, body, attachments, scheduleDate, sentFolder } = req.body;
     if (!to || !scheduleDate) return res.status(400).json({ success: false, message: 'Missing required fields for scheduling.' });
 
     const delay = new Date(scheduleDate).getTime() - Date.now();
     if (delay <= 0) return res.status(400).json({ success: false, message: 'Schedule date must be in the future.' });
 
     const jobId = `job-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
-    const transporter = nodemailer.createTransport({
-        host: 'mail.veebimajutus.ee', port: 465, secure: true,
-        auth: { user: email, pass: password },
-    });
+    
     const mailOptions = { from, to, cc, bcc, subject, html: body, attachments: (attachments || []).map((att: any) => ({
         filename: att.filename, content: att.content, encoding: 'base64', contentType: att.contentType,
     }))};
 
     const timeoutId = setTimeout(() => {
+        const transporter = nodemailer.createTransport({
+            host: 'mail.veebimajutus.ee', port: 465, secure: true,
+            auth: { user: email, pass: password },
+        });
+
         transporter.sendMail(mailOptions)
-            .then(() => console.log(`[SCHEDULE] Successfully sent job ${jobId}.`))
+            .then(async () => {
+                console.log(`[SCHEDULE] Successfully sent job ${jobId}.`);
+                if (sentFolder) {
+                    try {
+                        const rawMessage = await buildRawMessage(mailOptions);
+                        const imapClient = new ImapFlow({
+                             host: 'mail.veebimajutus.ee', port: 993, secure: true,
+                             auth: { user: email, pass: password }, logger: false,
+                        });
+                        await imapClient.connect();
+                        await imapClient.append(sentFolder, rawMessage, ['\\Seen']);
+                        await imapClient.logout();
+                        console.log(`[SCHEDULE] Appended job ${jobId} to ${sentFolder}.`);
+                    } catch (appendError) {
+                         console.error(`[SCHEDULE] FAILED TO APPEND job ${jobId} to ${sentFolder}:`, appendError);
+                    }
+                }
+            })
             .catch(error => console.error(`[SCHEDULE] Failed to send job ${jobId}:`, error))
             .finally(() => scheduledJobs.delete(jobId));
     }, delay);
@@ -287,7 +370,7 @@ app.post('/api/schedule-send', authMiddleware, async (req: ExpressRequest, res: 
     res.json({ success: true, message: 'Email scheduled successfully.', jobId });
 });
 
-app.post('/api/cancel-scheduled-send', authMiddleware, async (req: ExpressRequest, res: ExpressResponse) => {
+app.post('/api/cancel-scheduled-send', authMiddleware, async (req: express.Request, res: express.Response) => {
     const { jobId } = req.body;
     if (!jobId) return res.status(400).json({ success: false, message: 'Job ID is required.' });
     const timeoutId = scheduledJobs.get(jobId);

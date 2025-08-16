@@ -639,13 +639,15 @@ const flattenedFolderTree = useMemo<FolderTreeNode[]>(() => {
         return;
     }
     
+    const sentFolder = getFolderPathFor('sent');
+
     if (scheduleDate) {
         addToast("Scheduling email...");
         try {
             const attachmentPayloads = await Promise.all(attachments.map(async (file) => ({ filename: file.name, contentType: file.type, content: await fileToBase64(file) })));
             const response = await fetch('/api/schedule-send', {
                 method: 'POST', headers: authHeaders,
-                body: JSON.stringify({ from: `"${user.name}" <${user.email}>`, to, cc, bcc, subject, body, attachments: attachmentPayloads, scheduleDate: scheduleDate.toISOString() }),
+                body: JSON.stringify({ from: `"${user.name}" <${user.email}>`, to, cc, bcc, subject, body, attachments: attachmentPayloads, scheduleDate: scheduleDate.toISOString(), sentFolder }),
             });
             const result = await response.json();
             if (response.ok && result.success) {
@@ -671,19 +673,18 @@ const flattenedFolderTree = useMemo<FolderTreeNode[]>(() => {
         const attachmentPayloads = await Promise.all(attachments.map(async (file) => ({ filename: file.name, contentType: file.type, content: await fileToBase64(file) })));
         const response = await fetch('/api/send', {
             method: 'POST', headers: authHeaders,
-            body: JSON.stringify({ from: `"${user.name}" <${user.email}>`, to, cc, bcc, subject, body, attachments: attachmentPayloads }),
+            body: JSON.stringify({ from: `"${user.name}" <${user.email}>`, to, cc, bcc, subject, body, attachments: attachmentPayloads, sentFolder }),
         });
         const result = await response.json();
-        if (response.ok && result.success) {
-            const newEmail: Email = {
-                id: `email-${Date.now()}`, conversationId: composeState.conversationId || `conv-${Date.now()}`,
-                senderName: user.name, senderEmail: user.email, recipientEmail: to, cc, bcc, subject, body,
-                snippet: body.replace(/<[^>]*>?/gm, '').substring(0, 100), timestamp: new Date().toISOString(), isRead: true,
-                folderId: getFolderPathFor('sent'), labelIds: [],
-                attachments: attachments.map(f => ({fileName: f.name, fileSize: f.size, mimeType: f.type})),
-            };
-            setEmails(prev => { const existing = draftId ? prev.filter(e => e.id !== draftId) : prev; return [...existing, newEmail]; });
+        if (response.ok && result.success && result.sentEmail) {
+            const serverSavedEmail = result.sentEmail;
+            setEmails(prev => {
+                const existing = draftId ? prev.filter(e => e.id !== draftId) : prev;
+                return [...existing, serverSavedEmail];
+            });
             addToast("Message sent successfully.");
+        } else if (response.ok && result.success) {
+            addToast(result.message, { duration: 5000 });
         } else {
             addToast(`Failed to send email: ${result.message || "Unknown server error"}`, { duration: 5000 });
         }
