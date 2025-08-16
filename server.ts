@@ -1,11 +1,12 @@
-import * as express from 'express';
+
+import express, { Express, Request, Response } from 'express';
 import cors from 'cors';
 import { ImapFlow } from 'imapflow';
 import dotenv from 'dotenv';
 
 dotenv.config();
 
-const app: express.Express = express();
+const app: Express = express();
 const port = 3001;
 
 // Use a general CORS configuration for development to allow all origins.
@@ -13,7 +14,7 @@ const port = 3001;
 app.use(cors());
 app.use(express.json());
 
-app.post('/api/login', async (req: express.Request, res: express.Response) => {
+app.post('/api/login', async (req: Request, res: Response) => {
     const { email, password } = req.body;
 
     if (!email || !password) {
