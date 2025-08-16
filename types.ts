@@ -51,6 +51,13 @@ export interface FolderTreeNode extends UserFolder {
   level: number;
 }
 
+export interface Mailbox {
+  path: string;
+  name: string;
+  specialUse?: string;
+  delimiter: string;
+}
+
 
 export interface Email {
   id: string;
@@ -65,12 +72,13 @@ export interface Email {
   snippet: string;
   timestamp: string;
   isRead: boolean;
-  folderId: string;
+  folderId: string; // This will now be the mailbox path
   labelIds: string[];
   attachments?: Attachment[];
   scheduledSendTime?: string;
   snoozedUntil?: string;
   messageId?: string;
+  backendJobId?: string;
 }
 
 export interface Conversation {

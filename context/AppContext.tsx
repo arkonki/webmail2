@@ -1,5 +1,6 @@
+
 import React, { createContext, useState, useContext, ReactNode, useMemo, useCallback, useEffect } from 'react';
-import { Email, ActionType, Label, Conversation, User, AppSettings, Signature, AutoResponder, Rule, SystemLabel, Contact, ContactGroup, SystemFolder, UserFolder, Attachment, FolderTreeNode, Identity, Template, DisplayDensity, AppLog } from '../types';
+import { Email, ActionType, Label, Conversation, User, AppSettings, Signature, AutoResponder, Rule, SystemLabel, Contact, ContactGroup, SystemFolder, UserFolder, Attachment, FolderTreeNode, Identity, Template, DisplayDensity, AppLog, Mailbox } from '../types';
 import { useToast } from './ToastContext';
 
 
@@ -39,6 +40,7 @@ interface AppContextType {
   conversations: Conversation[];
   labels: Label[];
   userFolders: UserFolder[];
+  mailboxes: Mailbox[];
   folderTree: FolderTreeNode[];
   flattenedFolderTree: FolderTreeNode[];
   currentSelection: { type: SelectionType, id: string };
@@ -71,6 +73,7 @@ interface AppContextType {
   login: (email: string, pass: string) => Promise<void>;
   logout: () => void;
   checkUserSession: () => void;
+  getFolderPathFor: (specialUse: string, fallbackName: string) => string;
   
   // Mail Navigation
   setCurrentSelection: (type: SelectionType, id: string) => void;
@@ -218,6 +221,7 @@ export const AppContextProvider = ({ children }: { children: ReactNode }): React
   const [emails, setEmails] = useState<Email[]>([]);
   const [labels, setLabels] = useState<Label[]>([]);
   const [userFolders, setUserFolders] = useState<UserFolder[]>([]);
+  const [mailboxes, setMailboxes] = useState<Mailbox[]>([]);
   const [contacts, setContacts] = useState<Contact[]>([]);
   const [contactGroups, setContactGroups] = useState<ContactGroup[]>([]);
   const [currentSelection, _setCurrentSelection] = useState<{type: SelectionType, id: string}>({type: 'folder', id: SystemFolder.INBOX});
@@ -278,64 +282,15 @@ export const AppContextProvider = ({ children }: { children: ReactNode }): React
   useEffect(() => { if ('Notification' in window) setNotificationPermission(Notification.permission); }, []);
   
   // --- Data Persistence ---
-  // Each piece of state gets its own useEffect hook for saving. This is more direct 
-  // and robust than using a shared helper function, as it avoids potential stale 
-  // closures and ensures data is always saved with the correct, current user info.
-  useEffect(() => {
-    if (user) {
-        try { localStorage.setItem(`${user.email}-appSettings`, JSON.stringify(appSettings)); }
-        catch (e) { console.error('Failed to save appSettings to localStorage', e); }
-    }
-  }, [user, appSettings]);
-  
-  useEffect(() => {
-    if (user) {
-        try { localStorage.setItem(`${user.email}-emails`, JSON.stringify(emails)); }
-        catch (e) { console.error('Failed to save emails to localStorage', e); }
-    }
-  }, [user, emails]);
-
-  useEffect(() => {
-    if (user) {
-        try { localStorage.setItem(`${user.email}-contacts`, JSON.stringify(contacts)); }
-        catch (e) { console.error('Failed to save contacts to localStorage', e); }
-    }
-  }, [user, contacts]);
-
-  useEffect(() => {
-    if (user) {
-        try { localStorage.setItem(`${user.email}-contactGroups`, JSON.stringify(contactGroups)); }
-        catch (e) { console.error('Failed to save contactGroups to localStorage', e); }
-    }
-  }, [user, contactGroups]);
-  
-  useEffect(() => {
-    if (user) {
-        try { localStorage.setItem(`${user.email}-labels`, JSON.stringify(labels)); }
-        catch (e) { console.error('Failed to save labels to localStorage', e); }
-    }
-  }, [user, labels]);
-  
-  useEffect(() => {
-    if (user) {
-        try { localStorage.setItem(`${user.email}-userFolders`, JSON.stringify(userFolders)); }
-        catch (e) { console.error('Failed to save userFolders to localStorage', e); }
-    }
-  }, [user, userFolders]);
-
-  useEffect(() => {
-    if (user) {
-        try { localStorage.setItem(`${user.email}-sidebarSectionOrder`, JSON.stringify(sidebarSectionOrder)); }
-        catch (e) { console.error('Failed to save sidebarSectionOrder to localStorage', e); }
-    }
-  }, [user, sidebarSectionOrder]);
-
-  useEffect(() => {
-    if (user) {
-        try { localStorage.setItem(`${user.email}-isSetupComplete`, JSON.stringify(isSetupComplete)); }
-        catch (e) { console.error('Failed to save isSetupComplete to localStorage', e); }
-    }
-  }, [user, isSetupComplete]);
+  useEffect(() => { if (user) try { localStorage.setItem(`${user.email}-appSettings`, JSON.stringify(appSettings)); } catch (e) { console.error('Failed to save appSettings', e); } }, [user, appSettings]);
+  useEffect(() => { if (user) try { localStorage.setItem(`${user.email}-emails`, JSON.stringify(emails)); } catch (e) { console.error('Failed to save emails', e); } }, [user, emails]);
+  useEffect(() => { if (user) try { localStorage.setItem(`${user.email}-contacts`, JSON.stringify(contacts)); } catch (e) { console.error('Failed to save contacts', e); } }, [user, contacts]);
+  useEffect(() => { if (user) try { localStorage.setItem(`${user.email}-contactGroups`, JSON.stringify(contactGroups)); } catch (e) { console.error('Failed to save contactGroups', e); } }, [user, contactGroups]);
+  useEffect(() => { if (user) try { localStorage.setItem(`${user.email}-labels`, JSON.stringify(labels)); } catch (e) { console.error('Failed to save labels', e); } }, [user, labels]);
+  useEffect(() => { if (user) try { localStorage.setItem(`${user.email}-mailboxes`, JSON.stringify(mailboxes)); } catch (e) { console.error('Failed to save mailboxes', e); } }, [user, mailboxes]);
+  useEffect(() => { if (user) try { localStorage.setItem(`${user.email}-userFolders`, JSON.stringify(userFolders)); } catch (e) { console.error('Failed to save userFolders', e); } }, [user, userFolders]);
+  useEffect(() => { if (user) try { localStorage.setItem(`${user.email}-sidebarSectionOrder`, JSON.stringify(sidebarSectionOrder)); } catch (e) { console.error('Failed to save sidebarSectionOrder', e); } }, [user, sidebarSectionOrder]);
+  useEffect(() => { if (user) try { localStorage.setItem(`${user.email}-isSetupComplete`, JSON.stringify(isSetupComplete)); } catch (e) { console.error('Failed to save isSetupComplete', e); } }, [user, isSetupComplete]);
 
 
   const checkUserSession = useCallback(() => {
@@ -364,6 +319,7 @@ export const AppContextProvider = ({ children }: { children: ReactNode }): React
       setAppSettings(mergedSettings);
       loadFromStorage('emails', setEmails, []);
       loadFromStorage('labels', setLabels, []);
+      loadFromStorage('mailboxes', setMailboxes, []);
       loadFromStorage('userFolders', setUserFolders, []);
       loadFromStorage('contacts', setContacts, []);
       loadFromStorage('contactGroups', setContactGroups, []);
@@ -375,6 +331,14 @@ export const AppContextProvider = ({ children }: { children: ReactNode }): React
     }
     setTimeout(() => setIsLoading(false), 500);
   }, [addAppLog]);
+
+  const getFolderPathFor = useCallback((specialUse: string, fallbackName: string): string => {
+      const mailbox = mailboxes.find(m => m.specialUse === specialUse);
+      if (mailbox) return mailbox.path;
+      // Fallback for servers that might not report special-use flags correctly.
+      const fallbackMailbox = mailboxes.find(m => m.name.toLowerCase() === fallbackName.toLowerCase());
+      return fallbackMailbox?.path || fallbackName;
+  }, [mailboxes]);
 
   const login = useCallback(async (email: string, pass: string) => {
     setIsLoading(true);
@@ -390,32 +354,51 @@ export const AppContextProvider = ({ children }: { children: ReactNode }): React
 
         if (response.ok && data.success) {
             addAppLog(`Login successful for ${email}.`);
-            Object.keys(localStorage).forEach(key => {
-                if (key.startsWith(`${email}-`)) {
-                    localStorage.removeItem(key);
-                }
-            });
-
-            // Password is held in memory for sending emails, but NOT saved to localStorage
+            
             const newUser: User = { id: `user-${Date.now()}`, email, name: email.split('@')[0], password: pass };
             
             setEmails([]);
             setLabels([]);
             setUserFolders([]);
+            setMailboxes([]);
             setContacts([]);
             setContactGroups([]);
             setAppSettings(initialAppSettings);
             setSidebarSectionOrder(['folders', 'labels']);
             setIsSetupComplete(false);
             
-            // Set user and session *after* clearing state to ensure clean start
             setUser(newUser);
-            const sessionUser = { ...newUser, password: undefined }; // Create a version without the password for storage
+            const sessionUser = { ...newUser, password: undefined };
             localStorage.setItem('sessionUser', JSON.stringify(sessionUser));
+            _setCurrentSelection({type: 'folder', id: 'INBOX'});
 
+
+            // Sync folders first
+            addAppLog("Loading mail folders...");
+            addToast("Loading mail folders...");
+            try {
+                const foldersResponse = await fetch('/api/folders', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ email, password: pass }),
+                });
+                const foldersData = await foldersResponse.json();
+                if (foldersResponse.ok && foldersData.success) {
+                    setMailboxes(foldersData.mailboxes);
+                    addAppLog(`Loaded ${foldersData.mailboxes.length} mailboxes from server.`);
+                } else {
+                    addAppLog(`Mailbox loading failed: ${foldersData.message || "Unknown error"}`, 'error');
+                    addToast(foldersData.message || "Failed to load mailboxes.", { duration: 5000 });
+                }
+            } catch (folderError: any) {
+                 addAppLog(`Mailbox loading request failed: ${folderError.message}`, 'error');
+                 addToast("Failed to connect to the server for folder sync.", { duration: 5000 });
+            }
+
+            // Then sync emails from inbox
             setIsSyncing(true);
             addAppLog("Starting email sync with server...");
-            addToast("Syncing emails with server...");
+            addToast("Syncing your inbox...");
             try {
                 const syncResponse = await fetch('/api/sync', {
                     method: 'POST',
@@ -426,7 +409,7 @@ export const AppContextProvider = ({ children }: { children: ReactNode }): React
                 if (syncResponse.ok && syncData.success) {
                     setEmails(syncData.emails);
                     addAppLog(`Sync complete. Synced ${syncData.emails.length} emails.`);
-                    addToast(`Synced ${syncData.emails.length} emails successfully.`, { duration: 4000 });
+                    addToast(`Synced ${syncData.emails.length} emails from Inbox.`, { duration: 4000 });
                 } else {
                     addAppLog(`Email sync failed: ${syncData.message || "Unknown error"}`, 'error');
                     addToast(syncData.message || "Failed to sync emails.", { duration: 5000 });
@@ -455,9 +438,10 @@ export const AppContextProvider = ({ children }: { children: ReactNode }): React
 
   const logout = useCallback(() => {
     addAppLog(`User ${user?.email} logged out.`);
-    setUser(null); // This clears the user object, including the in-memory password
+    setUser(null);
     localStorage.removeItem('sessionUser');
     setEmails([]);
+    setMailboxes([]);
     _setCurrentSelection({type: 'folder', id: SystemFolder.INBOX});
     setSelectedConversationId(null);
     addToast("You have been logged out.");
@@ -477,7 +461,7 @@ export const AppContextProvider = ({ children }: { children: ReactNode }): React
             if (conversationIds.includes(email.conversationId)) {
                 const newEmail = { ...email };
                 delete newEmail.snoozedUntil;
-                newEmail.folderId = SystemFolder.INBOX;
+                newEmail.folderId = 'INBOX';
                 newEmail.labelIds = newEmail.labelIds.filter(id => id !== SystemLabel.SNOOZED);
                 return newEmail;
             }
@@ -487,28 +471,20 @@ export const AppContextProvider = ({ children }: { children: ReactNode }): React
     addToast(`${conversationIds.length} conversation(s) returned to Inbox.`);
   }, [addToast]);
 
-  // Check for snoozed emails periodically
   useEffect(() => {
     const interval = setInterval(() => {
         const now = new Date();
         const convsToUnsnooze: string[] = [];
-        
         setEmails(currentEmails => {
             currentEmails.forEach(email => {
                 if (email.snoozedUntil && new Date(email.snoozedUntil) <= now) {
-                    if (!convsToUnsnooze.includes(email.conversationId)) {
-                        convsToUnsnooze.push(email.conversationId);
-                    }
+                    if (!convsToUnsnooze.includes(email.conversationId)) { convsToUnsnooze.push(email.conversationId); }
                 }
             });
             return currentEmails;
         });
-
-        if (convsToUnsnooze.length > 0) {
-            unsnoozeConversation(convsToUnsnooze);
-        }
-    }, 5000); // Check every 5 seconds
-
+        if (convsToUnsnooze.length > 0) { unsnoozeConversation(convsToUnsnooze); }
+    }, 5000);
     return () => clearInterval(interval);
   }, [unsnoozeConversation]);
 
@@ -533,94 +509,19 @@ export const AppContextProvider = ({ children }: { children: ReactNode }): React
         const isSnoozed = !!lastEmail.snoozedUntil && new Date(lastEmail.snoozedUntil) > new Date();
 
         return {
-          id,
-          subject: lastEmail.subject || "(no subject)",
-          emails: convEmails,
-          participants,
-          lastTimestamp: lastEmail.timestamp,
-          isRead: convEmails.every(e => e.isRead),
-          folderId: lastEmail.folderId, // Folder is determined by the last email in the thread
-          labelIds: allLabelIds,
-          isSnoozed,
-          snoozedUntil: lastEmail.snoozedUntil,
-          hasAttachments: convEmails.some(e => e.attachments && e.attachments.length > 0),
-          canUnsubscribe,
-          __originalConversationId: lastEmail.conversationId,
+          id, subject: lastEmail.subject || "(no subject)", emails: convEmails, participants, lastTimestamp: lastEmail.timestamp,
+          isRead: convEmails.every(e => e.isRead), folderId: lastEmail.folderId, labelIds: allLabelIds, isSnoozed,
+          snoozedUntil: lastEmail.snoozedUntil, hasAttachments: convEmails.some(e => e.attachments && e.attachments.length > 0),
+          canUnsubscribe, __originalConversationId: lastEmail.conversationId,
         };
       })
       .sort((a, b) => new Date(b.lastTimestamp).getTime() - new Date(a.lastTimestamp).getTime());
   }, [emails, user]);
 
   const displayedConversations = useMemo(() => {
-    const applyRules = (email: Email): Email => {
-        let modifiedEmail = { ...email };
-        for (const rule of appSettings.rules) {
-            const { field, value } = rule.condition;
-            const targetField = field === 'sender' ? modifiedEmail.senderEmail : field === 'recipient' ? modifiedEmail.recipientEmail : modifiedEmail.subject;
-            
-            if (targetField.toLowerCase().includes(value.toLowerCase())) {
-                switch (rule.action.type) {
-                    case 'moveToFolder':
-                        if (rule.action.folderId) modifiedEmail.folderId = rule.action.folderId;
-                        break;
-                    case 'applyLabel':
-                        if (rule.action.labelId && !modifiedEmail.labelIds.includes(rule.action.labelId)) {
-                           modifiedEmail.labelIds = [...modifiedEmail.labelIds, rule.action.labelId];
-                        }
-                        break;
-                    case 'star':
-                        if (!modifiedEmail.labelIds.includes(SystemLabel.STARRED)) {
-                           modifiedEmail.labelIds = [...modifiedEmail.labelIds, SystemLabel.STARRED];
-                        }
-                        break;
-                    case 'markAsRead':
-                        modifiedEmail.isRead = true;
-                        break;
-                }
-            }
-        }
-        return modifiedEmail;
-    };
-
-    const processEmailsWithRules = (emailsToProcess: Email[]): Email[] => {
-       return emailsToProcess.map(applyRules);
-    };
-
-    const runAutoResponder = (newEmail: Email) => {
-        const { isEnabled, subject, message, startDate, endDate } = appSettings.autoResponder;
-        if (!isEnabled || newEmail.senderEmail === user?.email) return;
-
-        const now = new Date();
-        const isWithinDateRange = (!startDate || now >= new Date(startDate)) && (!endDate || now <= new Date(endDate));
-        if (!isWithinDateRange) return;
-        
-        // Check if we already replied to this conversation recently
-        const recentReplies = emails.filter(e => e.folderId === SystemFolder.SENT && e.recipientEmail === newEmail.senderEmail && e.subject.includes(subject));
-        const hoursSinceLastReply = recentReplies.length > 0 ? (now.getTime() - new Date(recentReplies[0].timestamp).getTime()) / (1000 * 60 * 60) : Infinity;
-
-        if (hoursSinceLastReply > 24) { // Only reply once every 24 hours
-            const reply: Email = {
-                id: `email-${Date.now()}`,
-                conversationId: newEmail.conversationId,
-                senderName: user?.name || '',
-                senderEmail: user?.email || '',
-                recipientEmail: newEmail.senderEmail,
-                subject: subject,
-                body: message,
-                snippet: message.substring(0, 100),
-                timestamp: now.toISOString(),
-                isRead: true,
-                folderId: SystemFolder.SENT,
-                labelIds: [],
-            };
-            setEmails(prev => [...prev, reply]);
-        }
-    };
-    
     let filtered = allConversations;
     if (searchQuery) {
         const searchLower = searchQuery.toLowerCase();
-        
         const filters = searchLower.match(/(?:[^\s"]+|"[^"]*")+/g) || [];
         filters.forEach((filter: string) => {
             if (filter.startsWith('from:')) {
@@ -637,13 +538,9 @@ export const AppContextProvider = ({ children }: { children: ReactNode }): React
                 filtered = filtered.filter(c => c.hasAttachments);
             } else {
                  const term = filter.replace(/"/g, '');
-                 filtered = filtered.filter(c => 
-                    c.subject.toLowerCase().includes(term) ||
-                    c.emails.some(e => e.body.toLowerCase().includes(term) || e.snippet.toLowerCase().includes(term))
-                 );
+                 filtered = filtered.filter(c => c.subject.toLowerCase().includes(term) || c.emails.some(e => e.body.toLowerCase().includes(term) || e.snippet.toLowerCase().includes(term)));
             }
         });
-
     } else if (currentSelection.type === 'folder') {
       filtered = allConversations.filter(c => c.folderId === currentSelection.id);
     } else if (currentSelection.type === 'label') {
@@ -654,34 +551,36 @@ export const AppContextProvider = ({ children }: { children: ReactNode }): React
         }
     }
     return filtered;
-  }, [allConversations, currentSelection, searchQuery, appSettings.rules, user, emails]);
+  }, [allConversations, currentSelection, searchQuery]);
   
   const folderTree = useMemo<FolderTreeNode[]>(() => {
+    const userCreatedFolders = mailboxes.filter(m => !m.specialUse && m.path.toUpperCase() !== 'INBOX');
+    if (userCreatedFolders.length === 0) return [];
+    
+    const delimiter = userCreatedFolders[0]?.delimiter || '/';
     const nodes: Record<string, FolderTreeNode> = {};
     const tree: FolderTreeNode[] = [];
 
     // Initialize all nodes
-    userFolders.forEach(folder => {
-        nodes[folder.id] = { ...folder, children: [], level: 0 };
+    userCreatedFolders.forEach(folder => {
+        nodes[folder.path] = { id: folder.path, name: folder.name, children: [], level: 0, order: 0 };
     });
 
     // Build the tree
-    userFolders.forEach(folder => {
-        if (folder.parentId && nodes[folder.parentId]) {
-            nodes[folder.parentId].children.push(nodes[folder.id]);
+    userCreatedFolders.forEach(folder => {
+        const pathParts = folder.path.split(delimiter);
+        if (pathParts.length > 1) {
+            const parentPath = pathParts.slice(0, -1).join(delimiter);
+            if (nodes[parentPath]) {
+                nodes[parentPath].children.push(nodes[folder.path]);
+            } else {
+                tree.push(nodes[folder.path]);
+            }
         } else {
-            tree.push(nodes[folder.id]);
+            tree.push(nodes[folder.path]);
         }
     });
     
-    const sortChildren = (node: FolderTreeNode) => {
-        node.children.sort((a,b) => a.order - b.order);
-        node.children.forEach(sortChildren);
-    }
-    
-    tree.sort((a,b) => a.order - b.order);
-    tree.forEach(sortChildren);
-
     // Set levels recursively
     const setLevels = (nodesToProcess: FolderTreeNode[], level: number) => {
         nodesToProcess.forEach(node => {
@@ -692,7 +591,7 @@ export const AppContextProvider = ({ children }: { children: ReactNode }): React
     setLevels(tree, 0);
 
     return tree;
-}, [userFolders]);
+}, [mailboxes]);
 
 const flattenedFolderTree = useMemo<FolderTreeNode[]>(() => {
     const result: FolderTreeNode[] = [];
@@ -744,28 +643,57 @@ const flattenedFolderTree = useMemo<FolderTreeNode[]>(() => {
         return;
     }
     
-    // If it's scheduled, just save it locally for now. A real implementation would need a server-side scheduler.
     if (scheduleDate) {
-        const conversation = allConversations.find(c => c.id === composeState.conversationId);
-        const scheduledEmail: Email = {
-            id: `email-${Date.now()}`,
-            conversationId: conversation?.id || `conv-${Date.now()}`,
-            senderName: user.name,
-            senderEmail: user.email,
-            recipientEmail: to, cc, bcc, subject, body,
-            snippet: body.replace(/<[^>]*>?/gm, '').substring(0, 100),
-            timestamp: new Date().toISOString(),
-            isRead: true,
-            folderId: SystemFolder.SCHEDULED,
-            labelIds: [],
-            attachments: attachments.map(f => ({fileName: f.name, fileSize: f.size, mimeType: f.type})),
-            scheduledSendTime: scheduleDate.toISOString(),
-        };
-        setEmails(prev => {
-            const existing = draftId ? prev.filter(e => e.id !== draftId) : prev;
-            return [...existing, scheduledEmail];
-        });
-        addToast("Message scheduled.");
+        addToast("Scheduling email...");
+        try {
+            const attachmentPayloads = await Promise.all(
+                attachments.map(async (file) => ({
+                    filename: file.name,
+                    contentType: file.type,
+                    content: await fileToBase64(file),
+                }))
+            );
+
+            const response = await fetch('/api/schedule-send', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    email: user.email,
+                    password: user.password,
+                    from: `"${user.name}" <${user.email}>`,
+                    to, cc, bcc, subject, body,
+                    attachments: attachmentPayloads,
+                    scheduleDate: scheduleDate.toISOString(),
+                }),
+            });
+            
+            const result = await response.json();
+            
+            if (response.ok && result.success) {
+                const scheduledEmail: Email = {
+                    id: `email-${Date.now()}`,
+                    conversationId: composeState.conversationId || `conv-${Date.now()}`,
+                    senderName: user.name, senderEmail: user.email, recipientEmail: to, cc, bcc, subject, body,
+                    snippet: body.replace(/<[^>]*>?/gm, '').substring(0, 100),
+                    timestamp: new Date().toISOString(), isRead: true,
+                    folderId: SystemFolder.SCHEDULED, // This is a client-side only folder concept
+                    labelIds: [],
+                    attachments: attachments.map(f => ({fileName: f.name, fileSize: f.size, mimeType: f.type})),
+                    scheduledSendTime: scheduleDate.toISOString(),
+                    backendJobId: result.jobId,
+                };
+                setEmails(prev => {
+                    const existing = draftId ? prev.filter(e => e.id !== draftId) : prev;
+                    return [...existing, scheduledEmail];
+                });
+                addToast("Message scheduled.");
+            } else {
+                addToast(`Failed to schedule email: ${result.message || "Unknown server error"}`, { duration: 5000 });
+            }
+        } catch (error: any) {
+            console.error('Failed to schedule email:', error);
+            addToast(`Failed to schedule email: ${error.message}`, { duration: 5000 });
+        }
         return;
     }
 
@@ -783,8 +711,7 @@ const flattenedFolderTree = useMemo<FolderTreeNode[]>(() => {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
-                email: user.email,
-                password: user.password,
+                email: user.email, password: user.password,
                 from: `"${user.name}" <${user.email}>`,
                 to, cc, bcc, subject, body,
                 attachments: attachmentPayloads,
@@ -794,17 +721,13 @@ const flattenedFolderTree = useMemo<FolderTreeNode[]>(() => {
         const result = await response.json();
         
         if (response.ok && result.success) {
-            const conversation = allConversations.find(c => c.id === composeState.conversationId);
             const newEmail: Email = {
                 id: `email-${Date.now()}`,
-                conversationId: conversation?.id || `conv-${Date.now()}`,
-                senderName: user.name,
-                senderEmail: user.email,
-                recipientEmail: to, cc, bcc, subject, body,
+                conversationId: composeState.conversationId || `conv-${Date.now()}`,
+                senderName: user.name, senderEmail: user.email, recipientEmail: to, cc, bcc, subject, body,
                 snippet: body.replace(/<[^>]*>?/gm, '').substring(0, 100),
-                timestamp: new Date().toISOString(),
-                isRead: true,
-                folderId: SystemFolder.SENT,
+                timestamp: new Date().toISOString(), isRead: true,
+                folderId: getFolderPathFor('\\Sent', SystemFolder.SENT),
                 labelIds: [],
                 attachments: attachments.map(f => ({fileName: f.name, fileSize: f.size, mimeType: f.type})),
             };
@@ -822,23 +745,17 @@ const flattenedFolderTree = useMemo<FolderTreeNode[]>(() => {
         addToast(`Failed to send email: ${error.message}`, { duration: 5000 });
     }
 
-  }, [user, allConversations, composeState.conversationId, addToast]);
+  }, [user, composeState.conversationId, addToast, getFolderPathFor]);
   
   const saveDraft = useCallback((data: SendEmailData, draftId?: string): string => {
-      const { to, cc, bcc, subject, body } = data;
-      
       const draft: Email = {
         id: draftId || `email-${Date.now()}`,
         conversationId: composeState.conversationId || `conv-${Date.now()}`,
-        senderName: user?.name || '',
-        senderEmail: user?.email || '',
-        recipientEmail: to,
-        cc, bcc,
-        subject, body,
-        snippet: body.replace(/<[^>]*>?/gm, '').substring(0, 100),
-        timestamp: new Date().toISOString(),
-        isRead: true,
-        folderId: SystemFolder.DRAFTS,
+        senderName: user?.name || '', senderEmail: user?.email || '', recipientEmail: data.to,
+        cc: data.cc, bcc: data.bcc, subject: data.subject, body: data.body,
+        snippet: data.body.replace(/<[^>]*>?/gm, '').substring(0, 100),
+        timestamp: new Date().toISOString(), isRead: true,
+        folderId: getFolderPathFor('\\Drafts', SystemFolder.DRAFTS),
         labelIds: [],
       };
       
@@ -848,7 +765,7 @@ const flattenedFolderTree = useMemo<FolderTreeNode[]>(() => {
       });
       addToast(draftId ? "Draft updated." : "Draft saved.");
       return draft.id;
-  }, [user, composeState.conversationId, addToast]);
+  }, [user, composeState.conversationId, addToast, getFolderPathFor]);
 
   const deleteDraft = useCallback((draftId: string) => {
       setEmails(prev => prev.filter(e => e.id !== draftId));
@@ -863,17 +780,11 @@ const flattenedFolderTree = useMemo<FolderTreeNode[]>(() => {
             : email
         )
     );
-    const folderName = userFolders.find(f => f.id === targetFolderId)?.name || targetFolderId;
+    const folderName = mailboxes.find(f => f.path === targetFolderId)?.name || targetFolderId;
     addToast(`${conversationIds.length} conversation(s) moved to "${folderName}".`);
     deselectAllConversations();
     if (conversationIds.includes(selectedConversationId || '')) setSelectedConversationId(null);
-  }, [userFolders, addToast, deselectAllConversations, selectedConversationId]);
-
-  const toggleLabel = useCallback((conversationIds: string[], labelId: string) => {
-    const isAdding = !allConversations.find(c => c.id === conversationIds[0])?.labelIds.includes(labelId);
-    if(isAdding) applyLabel(conversationIds, labelId);
-    else removeLabel(conversationIds, labelId);
-  }, [allConversations]);
+  }, [mailboxes, addToast, deselectAllConversations, selectedConversationId]);
 
   const applyLabel = useCallback((conversationIds: string[], labelId: string) => {
     setEmails(prevEmails =>
@@ -897,21 +808,62 @@ const flattenedFolderTree = useMemo<FolderTreeNode[]>(() => {
     addToast("Label removed.");
   }, [addToast]);
 
+  const toggleLabel = useCallback((conversationIds: string[], labelId: string) => {
+    const isAdding = !allConversations.find(c => c.id === conversationIds[0])?.labelIds.includes(labelId);
+    if(isAdding) applyLabel(conversationIds, labelId);
+    else removeLabel(conversationIds, labelId);
+  }, [allConversations, applyLabel, removeLabel]);
+
   const deleteConversation = useCallback((conversationIds: string[]) => {
-    const isTrash = currentSelection.type === 'folder' && currentSelection.id === SystemFolder.TRASH;
+    const emailsToProcess = emails.filter(e => conversationIds.includes(e.conversationId));
+    const scheduledEmailsToDelete = emailsToProcess.filter(e => e.backendJobId);
+
+    if (scheduledEmailsToDelete.length > 0) {
+        scheduledEmailsToDelete.forEach(async (email) => {
+            if (email.backendJobId) {
+                try {
+                    await fetch('/api/cancel-scheduled-send', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ jobId: email.backendJobId }),
+                    });
+                } catch (error) {
+                    console.error(`Failed to cancel scheduled send for job: ${email.backendJobId}`, error);
+                }
+            }
+        });
+    }
+      
+    const trashPath = getFolderPathFor('\\Trash', SystemFolder.TRASH);
+    const isTrash = currentSelection.id === trashPath;
+
     if (isTrash) {
       setEmails(prev => prev.filter(e => !conversationIds.includes(e.conversationId)));
       addToast(`${conversationIds.length} conversation(s) permanently deleted.`);
     } else {
-      moveConversations(conversationIds, SystemFolder.TRASH);
+      moveConversations(conversationIds, trashPath);
     }
-  }, [currentSelection, moveConversations, addToast]);
+  }, [currentSelection, moveConversations, addToast, emails, getFolderPathFor]);
 
-  const archiveConversation = useCallback((conversationIds: string[]) => moveConversations(conversationIds, SystemFolder.ARCHIVE), [moveConversations]);
+  const archiveConversation = useCallback((conversationIds: string[]) => {
+      let archiveFolder = mailboxes.find(m => m.name.toLowerCase() === 'archive');
+      if (archiveFolder) {
+        moveConversations(conversationIds, archiveFolder.path)
+      } else {
+        addToast("Please create an 'Archive' folder first to use this feature.", {duration: 4000});
+      }
+  }, [moveConversations, mailboxes, addToast]);
+
   const markAsRead = useCallback((conversationId: string) => { setEmails(prev => prev.map(e => e.conversationId === conversationId ? { ...e, isRead: true } : e)); }, []);
   const markAsUnread = useCallback((conversationIds: string[]) => { setEmails(prev => prev.map(e => conversationIds.includes(e.conversationId) ? { ...e, isRead: false } : e)); addToast(`Marked ${conversationIds.length} item(s) as unread.`); if (conversationIds.includes(selectedConversationId || '')) setSelectedConversationId(null); }, [addToast, selectedConversationId]);
-  const markAsSpam = useCallback((conversationIds: string[]) => moveConversations(conversationIds, SystemFolder.SPAM), [moveConversations]);
-  const markAsNotSpam = useCallback((conversationIds: string[]) => moveConversations(conversationIds, SystemFolder.INBOX), [moveConversations]);
+  
+  const markAsSpam = useCallback((conversationIds: string[]) => {
+    moveConversations(conversationIds, getFolderPathFor('\\Junk', SystemFolder.SPAM));
+  }, [moveConversations, getFolderPathFor]);
+  
+  const markAsNotSpam = useCallback((conversationIds: string[]) => {
+    moveConversations(conversationIds, 'INBOX');
+  }, [moveConversations]);
 
   // Settings actions
   const updateSignature = useCallback((signature: Signature) => { setAppSettings(prev => ({...prev, signature})); addToast("Signature settings updated."); }, [addToast]);
@@ -927,25 +879,26 @@ const flattenedFolderTree = useMemo<FolderTreeNode[]>(() => {
   const deleteTemplate = useCallback((id: string) => { setAppSettings(prev => ({ ...prev, templates: prev.templates.filter(t => t.id !== id) })); addToast("Template deleted."); }, [addToast]);
 
   const snoozeConversation = useCallback((conversationIds: string[], until: Date) => {
+    let archiveFolder = mailboxes.find(m => m.name.toLowerCase() === 'archive');
     setEmails(prev => prev.map(e => {
         if(conversationIds.includes(e.conversationId)) {
             const newLabelIds = [...new Set([...e.labelIds, SystemLabel.SNOOZED])];
-            return {...e, snoozedUntil: until.toISOString(), folderId: SystemFolder.ARCHIVE, labelIds: newLabelIds};
+            return {...e, snoozedUntil: until.toISOString(), folderId: archiveFolder?.path || 'INBOX', labelIds: newLabelIds};
         }
         return e;
     }));
     addToast(`${conversationIds.length} conversation(s) snoozed.`);
     deselectAllConversations();
     if (conversationIds.includes(selectedConversationId || '')) setSelectedConversationId(null);
-  }, [addToast, deselectAllConversations, selectedConversationId]);
+  }, [addToast, deselectAllConversations, selectedConversationId, mailboxes]);
   
   const unsubscribeFromSender = useCallback((senderEmail: string) => {
     addRule({
         condition: { field: 'sender', operator: 'contains', value: senderEmail },
-        action: { type: 'moveToFolder', folderId: SystemFolder.TRASH }
+        action: { type: 'moveToFolder', folderId: getFolderPathFor('\\Trash', SystemFolder.TRASH) }
     });
     addToast(`Unsubscribed from ${senderEmail}. Future messages will be moved to Trash.`);
-  }, [addRule, addToast]);
+  }, [addRule, addToast, getFolderPathFor]);
 
   // Bulk selection actions
   const toggleConversationSelection = useCallback((conversationId: string) => { setSelectedConversationIds(prev => { const next = new Set(prev); if (next.has(conversationId)) { next.delete(conversationId); } else { next.add(conversationId); } return next; }); }, []);
@@ -997,50 +950,23 @@ const flattenedFolderTree = useMemo<FolderTreeNode[]>(() => {
 
   const handleKeyboardShortcut = useCallback((e: KeyboardEvent) => {
     if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement || e.target instanceof HTMLDivElement && e.target.isContentEditable) return;
-    if (e.metaKey || e.ctrlKey || e.altKey) return; // Ignore complex combos for now
+    if (e.metaKey || e.ctrlKey || e.altKey) return;
 
     const newKeySequence = [...keySequence, e.key];
-    
-    // Check for multi-key shortcuts
     const sequenceStr = newKeySequence.join('');
-    if (sequenceStr === 'gi') {
-        _setCurrentSelection({type: 'folder', id: SystemFolder.INBOX});
-        setKeySequence([]); return;
-    }
-    if (sequenceStr === 'gs') {
-        _setCurrentSelection({type: 'folder', id: SystemFolder.SENT});
-        setKeySequence([]); return;
-    }
+    if (sequenceStr === 'gi') { _setCurrentSelection({type: 'folder', id: 'INBOX'}); setKeySequence([]); return; }
+    if (sequenceStr === 'gs') { _setCurrentSelection({type: 'folder', id: getFolderPathFor('\\Sent', SystemFolder.SENT)}); setKeySequence([]); return; }
     
-    // Reset sequence if it doesn't match any multi-key shortcut start
-    if ('gs'.startsWith(sequenceStr)) {
-        setKeySequence(newKeySequence);
-    } else {
-        setKeySequence([]);
-    }
+    if ('gs'.startsWith(sequenceStr)) { setKeySequence(newKeySequence); } else { setKeySequence([]); }
 
-    // Single key shortcuts
     switch (e.key) {
       case 'c': openCompose(); break;
       case '/': e.preventDefault(); setSearchQuery(''); break;
       case 'Escape': handleEscape(); break;
-      case 'j':
-      case 'ArrowDown':
-          e.preventDefault();
-          navigateConversationList('down');
-          break;
-      case 'k':
-      case 'ArrowUp':
-          e.preventDefault();
-          navigateConversationList('up');
-          break;
-      case 'Enter':
-          e.preventDefault();
-          openFocusedConversation();
-          break;
-      case 'x':
-          if(focusedConversationId) toggleConversationSelection(focusedConversationId);
-          break;
+      case 'j': case 'ArrowDown': e.preventDefault(); navigateConversationList('down'); break;
+      case 'k': case 'ArrowUp': e.preventDefault(); navigateConversationList('up'); break;
+      case 'Enter': e.preventDefault(); openFocusedConversation(); break;
+      case 'x': if(focusedConversationId) toggleConversationSelection(focusedConversationId); break;
       case '#':
           const idsToDelete = selectedConversationIds.size > 0 ? Array.from(selectedConversationIds) : (focusedConversationId ? [focusedConversationId] : []);
           if(idsToDelete.length > 0) deleteConversation(idsToDelete);
@@ -1061,18 +987,11 @@ const flattenedFolderTree = useMemo<FolderTreeNode[]>(() => {
             setIsShortcutsModalOpen(true);
             break;
     }
-  }, [keySequence, openCompose, handleEscape, navigateConversationList, openFocusedConversation, focusedConversationId, toggleConversationSelection, deleteConversation, selectedConversationIds, archiveConversation, markAsUnread]);
-
-
+  }, [keySequence, openCompose, handleEscape, navigateConversationList, openFocusedConversation, focusedConversationId, toggleConversationSelection, deleteConversation, selectedConversationIds, archiveConversation, markAsUnread, getFolderPathFor]);
   
   const completeFirstTimeSetup = useCallback((name: string, accountType: 'personal' | 'business') => {
     if(!user) return;
-    const newIdentity: Identity = {
-        id: `identity-${Date.now()}`,
-        name: name,
-        email: user.email,
-        accountType: accountType,
-    };
+    const newIdentity: Identity = { id: `identity-${Date.now()}`, name: name, email: user.email, accountType: accountType };
     setAppSettings(prev => ({...prev, identities: [newIdentity]}));
     setIsSetupComplete(true);
     addToast("Welcome! Your settings have been saved.");
@@ -1083,30 +1002,19 @@ const flattenedFolderTree = useMemo<FolderTreeNode[]>(() => {
     addToast("Identity updated.");
   }, [addToast]);
 
-  const requestNotificationPermission = useCallback(async () => {
-    if (!('Notification' in window)) {
-      addToast("This browser does not support desktop notification");
-      return;
-    }
-    const permission = await Notification.requestPermission();
-    setNotificationPermission(permission);
-    if (permission === 'granted') {
-        updateNotificationSettings(true);
-        addToast("Desktop notifications enabled!");
-    } else {
-        updateNotificationSettings(false);
-        addToast("Notifications permission not granted.");
-    }
-  }, [addToast]);
-
   const updateNotificationSettings = useCallback((enabled: boolean) => {
-    if(enabled && notificationPermission !== 'granted') {
-        addToast("Please enable notification permissions in your browser first.");
-        return;
-    }
+    if(enabled && notificationPermission !== 'granted') { addToast("Please enable notification permissions in your browser first."); return; }
     setAppSettings(prev => ({...prev, notifications: { enabled }}));
     addToast(enabled ? "Desktop notifications enabled." : "Desktop notifications disabled.");
   }, [notificationPermission, addToast]);
+
+  const requestNotificationPermission = useCallback(async () => {
+    if (!('Notification' in window)) { addToast("This browser does not support desktop notification"); return; }
+    const permission = await Notification.requestPermission();
+    setNotificationPermission(permission);
+    if (permission === 'granted') { updateNotificationSettings(true); addToast("Desktop notifications enabled!");
+    } else { updateNotificationSettings(false); addToast("Notifications permission not granted."); }
+  }, [addToast, updateNotificationSettings]);
 
   // Label Management
   const createLabel = useCallback((name: string, color: string) => { const newLabel: Label = { id: `label-${Date.now()}`, name, color, order: labels.length }; setLabels(prev => [...prev, newLabel]); addToast(`Label "${name}" created.`); }, [labels.length, addToast]);
@@ -1118,14 +1026,11 @@ const flattenedFolderTree = useMemo<FolderTreeNode[]>(() => {
           const draggedIndex = prevLabels.findIndex(l => l.id === draggedId);
           const targetIndex = prevLabels.findIndex(l => l.id === targetId);
           if (draggedIndex === -1 || targetIndex === -1) return prevLabels;
-
           const newLabels = [...prevLabels];
           const [draggedItem] = newLabels.splice(draggedIndex, 1);
-          
           let insertIndex = targetIndex;
           if (position === 'bottom') insertIndex += 1;
           if (draggedIndex < targetIndex && position === 'bottom') insertIndex -=1;
-
           newLabels.splice(insertIndex, 0, draggedItem);
           return newLabels.map((label, index) => ({ ...label, order: index }));
       });
@@ -1141,10 +1046,7 @@ const flattenedFolderTree = useMemo<FolderTreeNode[]>(() => {
     while(toProcess.length > 0) {
         const currentId = toProcess.pop()!;
         const children = userFolders.filter(f => f.parentId === currentId);
-        children.forEach(child => {
-            descendants.add(child.id);
-            toProcess.push(child.id);
-        });
+        children.forEach(child => { descendants.add(child.id); toProcess.push(child.id); });
     }
     return descendants;
   }, [userFolders]);
@@ -1152,7 +1054,6 @@ const flattenedFolderTree = useMemo<FolderTreeNode[]>(() => {
   const deleteFolder = useCallback((id: string) => {
     const folderToDelete = userFolders.find(f => f.id === id);
     if (!folderToDelete) return;
-
     const descendantIds = getFolderDescendants(id);
     const idsToDelete = new Set([id, ...descendantIds]);
     
@@ -1169,23 +1070,17 @@ const flattenedFolderTree = useMemo<FolderTreeNode[]>(() => {
               addToast("Folders can only be reordered within the same level.");
               return prevFolders;
           }
-          
           const siblings = prevFolders.filter(f => f.parentId === draggedFolder.parentId).sort((a,b) => a.order - b.order);
           const draggedIndex = siblings.findIndex(f => f.id === draggedId);
           const targetIndex = siblings.findIndex(f => f.id === targetId);
-
           const newSiblings = [...siblings];
           const [movedItem] = newSiblings.splice(draggedIndex, 1);
-          
           let insertIndex = targetIndex;
           if (position === 'bottom') insertIndex += 1;
            if (draggedIndex < targetIndex && position === 'bottom') insertIndex -=1;
-          
           newSiblings.splice(insertIndex, 0, movedItem);
-          
           const updatedOrders = new Map<string, number>();
           newSiblings.forEach((f, index) => updatedOrders.set(f.id, index));
-          
           return prevFolders.map(f => updatedOrders.has(f.id) ? { ...f, order: updatedOrders.get(f.id)! } : f);
       });
   }, [addToast]);
@@ -1208,20 +1103,16 @@ const flattenedFolderTree = useMemo<FolderTreeNode[]>(() => {
   }, [addToast]);
   
   const importContacts = useCallback((newContacts: Omit<Contact, 'id'>[]) => {
-      let addedCount = 0;
-      let skippedCount = 0;
+      let addedCount = 0; let skippedCount = 0;
       setContacts(prev => {
           const existingEmails = new Set(prev.map(c => c.email.toLowerCase()));
           const contactsToAdd: Contact[] = [];
-          
           newContacts.forEach(newContact => {
               if(!existingEmails.has(newContact.email.toLowerCase())) {
                   contactsToAdd.push({ id: `contact-${Date.now()}-${addedCount}`, ...newContact });
                   existingEmails.add(newContact.email.toLowerCase());
                   addedCount++;
-              } else {
-                  skippedCount++;
-              }
+              } else { skippedCount++; }
           });
           return [...prev, ...contactsToAdd].sort((a,b) => a.name.localeCompare(b.name));
       });
@@ -1239,8 +1130,8 @@ const flattenedFolderTree = useMemo<FolderTreeNode[]>(() => {
   
 
   const value = {
-    user, emails, labels, userFolders, conversations: allConversations, currentSelection, selectedConversationId, composeState, searchQuery, selectedConversationIds, theme, displayedConversations, isSidebarCollapsed, sidebarSectionOrder, view, appSettings, contacts, contactGroups, selectedContactId, selectedGroupId, isLoading, isSyncing, isSetupComplete, notificationPermission, isShortcutsModalOpen, shortcutTrigger, focusedConversationId, isOnline, isDraggingEmail, appLogs,
-    login, logout, checkUserSession,
+    user, emails, labels, userFolders, mailboxes, conversations: allConversations, currentSelection, selectedConversationId, composeState, searchQuery, selectedConversationIds, theme, displayedConversations, isSidebarCollapsed, sidebarSectionOrder, view, appSettings, contacts, contactGroups, selectedContactId, selectedGroupId, isLoading, isSyncing, isSetupComplete, notificationPermission, isShortcutsModalOpen, shortcutTrigger, focusedConversationId, isOnline, isDraggingEmail, appLogs,
+    login, logout, checkUserSession, getFolderPathFor,
     setCurrentSelection, setSelectedConversationId, setSearchQuery, 
     openCompose, closeCompose, toggleMinimizeCompose, sendEmail, saveDraft, deleteDraft, cancelSend,
     moveConversations, toggleLabel, applyLabel, removeLabel, deleteConversation, archiveConversation, markAsRead, markAsUnread, markAsSpam, markAsNotSpam, snoozeConversation, unsnoozeConversation, unsubscribeFromSender,
