@@ -1,4 +1,4 @@
-import express, { Application, Request, Response } from 'express';
+import * as express from 'express';
 import cors from 'cors';
 import { ImapFlow } from 'imapflow';
 import dotenv from 'dotenv';
@@ -7,7 +7,7 @@ import nodemailer from 'nodemailer';
 
 dotenv.config();
 
-const app: Application = express();
+const app: express.Application = express();
 const port = 3001;
 
 // Use a general CORS configuration for development to allow all origins.
@@ -18,7 +18,7 @@ app.use(express.json({ limit: '10mb' })); // Increase limit for attachments
 // In-memory store for scheduled jobs. In a real production app, this should be a persistent store like Redis.
 const scheduledJobs = new Map<string, NodeJS.Timeout>();
 
-app.post('/api/login', async (req: Request, res: Response) => {
+app.post('/api/login', async (req: express.Request, res: express.Response) => {
     const { email, password } = req.body;
 
     if (!email || !password) {
@@ -48,7 +48,7 @@ app.post('/api/login', async (req: Request, res: Response) => {
     }
 });
 
-app.post('/api/folders', async (req: Request, res: Response) => {
+app.post('/api/folders', async (req: express.Request, res: express.Response) => {
     const { email, password } = req.body;
     const logPrefix = `[FOLDERS FOR ${email}]`;
 
@@ -119,7 +119,7 @@ app.post('/api/folders', async (req: Request, res: Response) => {
     }
 });
 
-app.post('/api/sync', async (req: Request, res: Response) => {
+app.post('/api/sync', async (req: express.Request, res: express.Response) => {
     const { email, password } = req.body;
     const logPrefix = `[SYNC FOR ${email}]`;
 
@@ -228,7 +228,7 @@ app.post('/api/sync', async (req: Request, res: Response) => {
     }
 });
 
-app.post('/api/test-connection', async (req: Request, res: Response) => {
+app.post('/api/test-connection', async (req: express.Request, res: express.Response) => {
     const { email, password } = req.body;
     const logPrefix = `[TEST FOR ${email}]`;
 
@@ -260,7 +260,7 @@ app.post('/api/test-connection', async (req: Request, res: Response) => {
     }
 });
 
-app.post('/api/send', async (req: Request, res: Response) => {
+app.post('/api/send', async (req: express.Request, res: express.Response) => {
     const { email, password, from, to, cc, bcc, subject, body, attachments } = req.body;
     const logPrefix = `[SEND FOR ${email}]`;
 
@@ -304,7 +304,7 @@ app.post('/api/send', async (req: Request, res: Response) => {
     }
 });
 
-app.post('/api/schedule-send', async (req: Request, res: Response) => {
+app.post('/api/schedule-send', async (req: express.Request, res: express.Response) => {
     const { email, password, from, to, cc, bcc, subject, body, attachments, scheduleDate } = req.body;
     const logPrefix = `[SCHEDULE FOR ${email}]`;
 
@@ -358,7 +358,7 @@ app.post('/api/schedule-send', async (req: Request, res: Response) => {
     res.json({ success: true, message: 'Email scheduled successfully.', jobId });
 });
 
-app.post('/api/cancel-scheduled-send', async (req: Request, res: Response) => {
+app.post('/api/cancel-scheduled-send', async (req: express.Request, res: express.Response) => {
     const { jobId } = req.body;
     const logPrefix = `[CANCEL SCHEDULE]`;
 

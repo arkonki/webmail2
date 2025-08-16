@@ -220,6 +220,7 @@ const fileToBase64 = (file: File): Promise<string> =>
 
 export const AppContextProvider = ({ children }: { children: ReactNode }): React.ReactElement => {
   const [user, setUser] = useState<User | null>(null);
+  const [sessionPassword, setSessionPassword] = useState<string | null>(null);
   const [emails, setEmails] = useState<Email[]>([]);
   const [labels, setLabels] = useState<Label[]>([]);
   const [userFolders, setUserFolders] = useState<UserFolder[]>([]);
@@ -298,13 +299,12 @@ export const AppContextProvider = ({ children }: { children: ReactNode }): React
   const checkUserSession = useCallback(() => {
     setIsLoading(true);
     const sessionUserStr = localStorage.getItem('sessionUser');
-    if (sessionUserStr) {
+    const savedPassword = sessionStorage.getItem('sessionPassword');
+
+    if (sessionUserStr && savedPassword) {
       const sessionUser = JSON.parse(sessionUserStr);
-      const savedPassword = sessionStorage.getItem('sessionPassword');
-      if (savedPassword) {
-        sessionUser.password = savedPassword; // Restore password from session storage into the state
-      }
       setUser(sessionUser);
+      setSessionPassword(savedPassword);
       addAppLog(`Session restored for ${sessionUser.email}`);
 
       const loadFromStorage = (key: string, setter: React.Dispatch<any>, defaultValue: any) => {
@@ -335,6 +335,7 @@ export const AppContextProvider = ({ children }: { children: ReactNode }): React
       
     } else {
         setUser(null);
+        setSessionPassword(null);
     }
     setTimeout(() => setIsLoading(false), 500);
   }, [addAppLog]);
@@ -377,7 +378,7 @@ export const AppContextProvider = ({ children }: { children: ReactNode }): React
         if (response.ok && data.success) {
             addAppLog(`Login successful for ${email}.`);
             
-            const newUser: User = { id: `user-${Date.now()}`, email, name: email.split('@')[0], password: pass };
+            const newUser: User = { id: `user-${Date.now()}`, email, name: email.split('@')[0] };
             
             setEmails([]);
             setLabels([]);
@@ -390,9 +391,9 @@ export const AppContextProvider = ({ children }: { children: ReactNode }): React
             setIsSetupComplete(false);
             
             setUser(newUser);
-            sessionStorage.setItem('sessionPassword', pass); // Store password securely in session storage
-            const sessionUser = { ...newUser, password: undefined }; // Remove password for localStorage
-            localStorage.setItem('sessionUser', JSON.stringify(sessionUser));
+            setSessionPassword(pass);
+            sessionStorage.setItem('sessionPassword', pass);
+            localStorage.setItem('sessionUser', JSON.stringify(newUser));
             _setCurrentSelection({type: 'folder', id: 'INBOX'});
 
 
@@ -493,6 +494,7 @@ export const AppContextProvider = ({ children }: { children: ReactNode }): React
   const logout = useCallback(() => {
     addAppLog(`User ${user?.email} logged out.`);
     setUser(null);
+    setSessionPassword(null);
     localStorage.removeItem('sessionUser');
     sessionStorage.removeItem('sessionPassword'); // Clear password from session storage
     setEmails([]);
@@ -695,7 +697,7 @@ const flattenedFolderTree = useMemo<FolderTreeNode[]>(() => {
   const actuallySendEmail = useCallback(async (data: SendEmailData, draftId?: string) => {
     const { to, cc, bcc, subject, body, attachments, scheduleDate } = data;
     
-    if (!user || !user.password) {
+    if (!user || !sessionPassword) {
         addToast("Cannot send email. User session is invalid. Please log out and log back in.", { duration: 5000 });
         return;
     }
@@ -716,7 +718,7 @@ const flattenedFolderTree = useMemo<FolderTreeNode[]>(() => {
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     email: user.email,
-                    password: user.password,
+                    password: sessionPassword,
                     from: `"${user.name}" <${user.email}>`,
                     to, cc, bcc, subject, body,
                     attachments: attachmentPayloads,
@@ -768,7 +770,7 @@ const flattenedFolderTree = useMemo<FolderTreeNode[]>(() => {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
-                email: user.email, password: user.password,
+                email: user.email, password: sessionPassword,
                 from: `"${user.name}" <${user.email}>`,
                 to, cc, bcc, subject, body,
                 attachments: attachmentPayloads,
@@ -802,7 +804,7 @@ const flattenedFolderTree = useMemo<FolderTreeNode[]>(() => {
         addToast(`Failed to send email: ${error.message}`, { duration: 5000 });
     }
 
-  }, [user, composeState.conversationId, addToast, getFolderPathFor]);
+  }, [user, sessionPassword, composeState.conversationId, addToast, getFolderPathFor]);
   
   const saveDraft = useCallback((data: SendEmailData, draftId?: string): string => {
       const draft: Email = {
