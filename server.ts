@@ -1,5 +1,4 @@
-
-import express, { Request, Response } from 'express';
+import express, { Application, Request, Response } from 'express';
 import cors from 'cors';
 import { ImapFlow } from 'imapflow';
 import dotenv from 'dotenv';
@@ -8,7 +7,7 @@ import nodemailer from 'nodemailer';
 
 dotenv.config();
 
-const app = express();
+const app: Application = express();
 const port = 3001;
 
 // Use a general CORS configuration for development to allow all origins.

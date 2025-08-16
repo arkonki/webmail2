@@ -300,6 +300,10 @@ export const AppContextProvider = ({ children }: { children: ReactNode }): React
     const sessionUserStr = localStorage.getItem('sessionUser');
     if (sessionUserStr) {
       const sessionUser = JSON.parse(sessionUserStr);
+      const savedPassword = sessionStorage.getItem('sessionPassword');
+      if (savedPassword) {
+        sessionUser.password = savedPassword; // Restore password from session storage into the state
+      }
       setUser(sessionUser);
       addAppLog(`Session restored for ${sessionUser.email}`);
 
@@ -386,7 +390,8 @@ export const AppContextProvider = ({ children }: { children: ReactNode }): React
             setIsSetupComplete(false);
             
             setUser(newUser);
-            const sessionUser = { ...newUser, password: undefined };
+            sessionStorage.setItem('sessionPassword', pass); // Store password securely in session storage
+            const sessionUser = { ...newUser, password: undefined }; // Remove password for localStorage
             localStorage.setItem('sessionUser', JSON.stringify(sessionUser));
             _setCurrentSelection({type: 'folder', id: 'INBOX'});
 
@@ -489,6 +494,7 @@ export const AppContextProvider = ({ children }: { children: ReactNode }): React
     addAppLog(`User ${user?.email} logged out.`);
     setUser(null);
     localStorage.removeItem('sessionUser');
+    sessionStorage.removeItem('sessionPassword'); // Clear password from session storage
     setEmails([]);
     setMailboxes([]);
     _setCurrentSelection({type: 'folder', id: SystemFolder.INBOX});
