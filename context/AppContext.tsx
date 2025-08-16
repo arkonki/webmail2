@@ -58,6 +58,7 @@ interface AppContextType {
   selectedContactId: string | null;
   selectedGroupId: string | null;
   isLoading: boolean;
+  isSyncing: boolean;
   isSetupComplete: boolean;
   notificationPermission: NotificationPermission;
   isShortcutsModalOpen: boolean;
@@ -229,6 +230,7 @@ export const AppContextProvider = ({ children }: { children: ReactNode }): React
   const [view, setView] = useState<View>('mail');
   const [appSettings, setAppSettings] = useState<AppSettings>(initialAppSettings);
   const [isLoading, setIsLoading] = useState(true);
+  const [isSyncing, setIsSyncing] = useState(false);
   const [isSetupComplete, setIsSetupComplete] = useState<boolean>(false);
   const [pendingSend, setPendingSend] = useState<PendingSend | null>(null);
   const [notificationPermission, setNotificationPermission] = useState<NotificationPermission>('default');
@@ -320,7 +322,6 @@ export const AppContextProvider = ({ children }: { children: ReactNode }): React
         const data = await response.json();
 
         if (response.ok && data.success) {
-            // This is a new user session. Clear out any old data for this email.
             Object.keys(localStorage).forEach(key => {
                 if (key.startsWith(`${email}-`)) {
                     localStorage.removeItem(key);
@@ -331,7 +332,6 @@ export const AppContextProvider = ({ children }: { children: ReactNode }): React
             setUser(newUser);
             localStorage.setItem('sessionUser', JSON.stringify(newUser));
             
-            // Reset state for the new user
             setEmails([]);
             setLabels([]);
             setUserFolders([]);
@@ -339,7 +339,29 @@ export const AppContextProvider = ({ children }: { children: ReactNode }): React
             setContactGroups([]);
             setAppSettings(initialAppSettings);
             setSidebarSectionOrder(['folders', 'labels']);
-            setIsSetupComplete(false); // New user needs to go through setup
+            setIsSetupComplete(false);
+
+            setIsSyncing(true);
+            addToast("Syncing emails with server...");
+            try {
+                const syncResponse = await fetch('/api/sync', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ email, password: pass }),
+                });
+                const syncData = await syncResponse.json();
+                if (syncResponse.ok && syncData.success) {
+                    setEmails(syncData.emails);
+                    addToast(`Synced ${syncData.emails.length} emails successfully.`, { duration: 4000 });
+                } else {
+                    addToast(syncData.message || "Failed to sync emails.", { duration: 5000 });
+                }
+            } catch (syncError) {
+                console.error('Email sync request failed:', syncError);
+                addToast("Failed to connect to the server for email sync.", { duration: 5000 });
+            } finally {
+                setIsSyncing(false);
+            }
         } else {
             addToast(data.message || "Invalid credentials.", { duration: 5000 });
             setUser(null);
@@ -1081,7 +1103,7 @@ const flattenedFolderTree = useMemo<FolderTreeNode[]>(() => {
   
 
   const value = {
-    user, emails, labels, userFolders, conversations: allConversations, currentSelection, selectedConversationId, composeState, searchQuery, selectedConversationIds, theme, displayedConversations, isSidebarCollapsed, sidebarSectionOrder, view, appSettings, contacts, contactGroups, selectedContactId, selectedGroupId, isLoading, isSetupComplete, notificationPermission, isShortcutsModalOpen, shortcutTrigger, focusedConversationId, isOnline, isDraggingEmail,
+    user, emails, labels, userFolders, conversations: allConversations, currentSelection, selectedConversationId, composeState, searchQuery, selectedConversationIds, theme, displayedConversations, isSidebarCollapsed, sidebarSectionOrder, view, appSettings, contacts, contactGroups, selectedContactId, selectedGroupId, isLoading, isSyncing, isSetupComplete, notificationPermission, isShortcutsModalOpen, shortcutTrigger, focusedConversationId, isOnline, isDraggingEmail,
     login, logout, checkUserSession,
     setCurrentSelection, setSelectedConversationId, setSearchQuery, 
     openCompose, closeCompose, toggleMinimizeCompose, sendEmail, saveDraft, deleteDraft, cancelSend,

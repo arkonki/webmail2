@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { FixedSizeList as List } from 'react-window';
 import { useAppContext } from '../context/AppContext';
@@ -16,6 +15,7 @@ import MoveToPopover from './MoveToPopover';
 import { EnvelopeOpenIcon } from './icons/EnvelopeOpenIcon';
 import { ClockIcon } from './icons/ClockIcon';
 import SnoozePopover from './SnoozePopover';
+import { SpinnerIcon } from './icons/SpinnerIcon';
 
 const BulkActionBar = () => {
     const { 
@@ -102,7 +102,7 @@ const BulkActionBar = () => {
 
 
 const EmailList: React.FC = () => {
-  const { appSettings, currentSelection, searchQuery, selectedConversationIds, selectAllConversations, deselectAllConversations, displayedConversations, labels, userFolders } = useAppContext();
+  const { appSettings, currentSelection, searchQuery, selectedConversationIds, selectAllConversations, deselectAllConversations, displayedConversations, labels, userFolders, isSyncing } = useAppContext();
   const isSearching = searchQuery.length > 0;
   
   const allDisplayedIds = displayedConversations.map(c => c.id);
@@ -158,6 +158,15 @@ const EmailList: React.FC = () => {
   }, []);
 
   const renderContent = () => {
+    if (isSyncing && displayedConversations.length === 0) {
+        return (
+            <div className="flex-grow flex flex-col items-center justify-center p-8 text-center text-gray-500 dark:text-gray-400">
+                <SpinnerIcon className="w-12 h-12 text-primary animate-spin mb-4" />
+                <p>Syncing your mailbox...</p>
+            </div>
+        );
+    }
+
     if (displayedConversations.length === 0) {
         return (
             <div className="flex-grow flex items-center justify-center p-8 text-center text-gray-500 dark:text-gray-400">
