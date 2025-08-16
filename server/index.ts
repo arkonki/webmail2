@@ -1,8 +1,9 @@
-import express, { Request, Response } from 'express';
+import express from 'express';
 import cors from 'cors';
 import { ImapFlow } from 'imapflow';
 import dotenv from 'dotenv';
 import { simpleParser } from 'mailparser';
+import nodemailer from 'nodemailer';
 
 dotenv.config();
 
@@ -12,9 +13,9 @@ const port = 3001;
 // Use a general CORS configuration for development to allow all origins.
 // This is more robust for local testing than a specific origin.
 app.use(cors());
-app.use(express.json());
+app.use(express.json({ limit: '10mb' })); // Increase limit for attachments
 
-app.post('/api/login', async (req: Request, res: Response) => {
+app.post('/api/login', async (req: express.Request, res: express.Response) => {
     const { email, password } = req.body;
 
     if (!email || !password) {
@@ -44,7 +45,7 @@ app.post('/api/login', async (req: Request, res: Response) => {
     }
 });
 
-app.post('/api/sync', async (req: Request, res: Response) => {
+app.post('/api/sync', async (req: express.Request, res: express.Response) => {
     const { email, password } = req.body;
     const logPrefix = `[SYNC FOR ${email}]`;
 
@@ -153,7 +154,7 @@ app.post('/api/sync', async (req: Request, res: Response) => {
     }
 });
 
-app.post('/api/test-connection', async (req: Request, res: Response) => {
+app.post('/api/test-connection', async (req: express.Request, res: express.Response) => {
     const { email, password } = req.body;
     const logPrefix = `[TEST FOR ${email}]`;
 
@@ -182,6 +183,50 @@ app.post('/api/test-connection', async (req: Request, res: Response) => {
     } catch (err: any) {
         console.error(`${logPrefix} Test connection failed:`, err);
         res.status(401).json({ success: false, message: `Connection failed: ${err.message}` });
+    }
+});
+
+app.post('/api/send', async (req: express.Request, res: express.Response) => {
+    const { email, password, from, to, cc, bcc, subject, body, attachments } = req.body;
+    const logPrefix = `[SEND FOR ${email}]`;
+
+    if (!email || !password || !to) {
+        return res.status(400).json({ success: false, message: 'Missing required fields for sending email.' });
+    }
+
+    const transporter = nodemailer.createTransport({
+        host: 'mail.veebimajutus.ee',
+        port: 465, // Use 465 for SSL
+        secure: true, // true for 465, false for other ports
+        auth: {
+            user: email,
+            pass: password,
+        },
+    });
+
+    const mailOptions = {
+        from, // e.g., '"Your Name" <your.email@example.com>'
+        to,
+        cc,
+        bcc,
+        subject,
+        html: body,
+        attachments: (attachments || []).map((att: any) => ({
+            filename: att.filename,
+            content: att.content,
+            encoding: 'base64',
+            contentType: att.contentType,
+        })),
+    };
+
+    try {
+        console.log(`${logPrefix} Attempting to send email to ${to}...`);
+        await transporter.sendMail(mailOptions);
+        console.log(`${logPrefix} Email sent successfully.`);
+        res.json({ success: true, message: 'Email sent successfully.' });
+    } catch (error: any) {
+        console.error(`${logPrefix} Failed to send email:`, error);
+        res.status(500).json({ success: false, message: `Failed to send email: ${error.message}` });
     }
 });
 

@@ -201,6 +201,18 @@ const initialAppSettings: AppSettings = {
 
 const AppContext = createContext<AppContextType | undefined>(undefined);
 
+const fileToBase64 = (file: File): Promise<string> =>
+  new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.readAsDataURL(file);
+    reader.onload = () => {
+      const result = reader.result as string;
+      // remove the "data:*/*;base64," part
+      resolve(result.split(',')[1]);
+    };
+    reader.onerror = error => reject(error);
+  });
+
 export const AppContextProvider = ({ children }: { children: ReactNode }): React.ReactElement => {
   const [user, setUser] = useState<User | null>(null);
   const [emails, setEmails] = useState<Email[]>([]);
@@ -370,9 +382,7 @@ export const AppContextProvider = ({ children }: { children: ReactNode }): React
     try {
         const response = await fetch('/api/login', {
             method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-            },
+            headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ email, password: pass }),
         });
 
@@ -386,7 +396,8 @@ export const AppContextProvider = ({ children }: { children: ReactNode }): React
                 }
             });
 
-            const newUser = { id: `user-${Date.now()}`, email, name: email.split('@')[0] };
+            // Password is held in memory for sending emails, but NOT saved to localStorage
+            const newUser: User = { id: `user-${Date.now()}`, email, name: email.split('@')[0], password: pass };
             
             setEmails([]);
             setLabels([]);
@@ -399,7 +410,8 @@ export const AppContextProvider = ({ children }: { children: ReactNode }): React
             
             // Set user and session *after* clearing state to ensure clean start
             setUser(newUser);
-            localStorage.setItem('sessionUser', JSON.stringify(newUser));
+            const sessionUser = { ...newUser, password: undefined }; // Create a version without the password for storage
+            localStorage.setItem('sessionUser', JSON.stringify(sessionUser));
 
             setIsSyncing(true);
             addAppLog("Starting email sync with server...");
@@ -411,7 +423,6 @@ export const AppContextProvider = ({ children }: { children: ReactNode }): React
                     body: JSON.stringify({ email, password: pass }),
                 });
                 const syncData = await syncResponse.json();
-                console.log('Sync data from server:', syncData);
                 if (syncResponse.ok && syncData.success) {
                     setEmails(syncData.emails);
                     addAppLog(`Sync complete. Synced ${syncData.emails.length} emails.`);
@@ -444,7 +455,7 @@ export const AppContextProvider = ({ children }: { children: ReactNode }): React
 
   const logout = useCallback(() => {
     addAppLog(`User ${user?.email} logged out.`);
-    setUser(null);
+    setUser(null); // This clears the user object, including the in-memory password
     localStorage.removeItem('sessionUser');
     setEmails([]);
     _setCurrentSelection({type: 'folder', id: SystemFolder.INBOX});
@@ -725,35 +736,93 @@ const flattenedFolderTree = useMemo<FolderTreeNode[]>(() => {
     }
   }, [pendingSend, addToast]);
   
-  const actuallySendEmail = useCallback((data: SendEmailData, draftId?: string) => {
+  const actuallySendEmail = useCallback(async (data: SendEmailData, draftId?: string) => {
     const { to, cc, bcc, subject, body, attachments, scheduleDate } = data;
-    const conversation = allConversations.find(c => c.id === composeState.conversationId);
     
-    const newEmail: Email = {
-        id: `email-${Date.now()}`,
-        conversationId: conversation?.id || `conv-${Date.now()}`,
-        senderName: user?.name || '',
-        senderEmail: user?.email || '',
-        recipientEmail: to,
-        cc, bcc,
-        subject: subject || (conversation?.subject || "(no subject)"),
-        body,
-        snippet: body.replace(/<[^>]*>?/gm, '').substring(0, 100),
-        timestamp: new Date().toISOString(),
-        isRead: true,
-        folderId: scheduleDate ? SystemFolder.SCHEDULED : SystemFolder.SENT,
-        labelIds: [],
-        attachments: attachments.map(f => ({fileName: f.name, fileSize: f.size, mimeType: f.type})),
-        scheduledSendTime: scheduleDate?.toISOString(),
-    };
+    if (!user || !user.password) {
+        addToast("Cannot send email. User session is invalid. Please log out and log back in.", { duration: 5000 });
+        return;
+    }
     
-    setEmails(prev => {
-        const existing = draftId ? prev.filter(e => e.id !== draftId) : prev;
-        return [...existing, newEmail];
-    });
-    addToast(scheduleDate ? "Message scheduled." : "Message sent.");
+    // If it's scheduled, just save it locally for now. A real implementation would need a server-side scheduler.
+    if (scheduleDate) {
+        const conversation = allConversations.find(c => c.id === composeState.conversationId);
+        const scheduledEmail: Email = {
+            id: `email-${Date.now()}`,
+            conversationId: conversation?.id || `conv-${Date.now()}`,
+            senderName: user.name,
+            senderEmail: user.email,
+            recipientEmail: to, cc, bcc, subject, body,
+            snippet: body.replace(/<[^>]*>?/gm, '').substring(0, 100),
+            timestamp: new Date().toISOString(),
+            isRead: true,
+            folderId: SystemFolder.SCHEDULED,
+            labelIds: [],
+            attachments: attachments.map(f => ({fileName: f.name, fileSize: f.size, mimeType: f.type})),
+            scheduledSendTime: scheduleDate.toISOString(),
+        };
+        setEmails(prev => {
+            const existing = draftId ? prev.filter(e => e.id !== draftId) : prev;
+            return [...existing, scheduledEmail];
+        });
+        addToast("Message scheduled.");
+        return;
+    }
 
-  }, [user, allConversations, composeState.conversationId, closeCompose, addToast]);
+    addToast("Sending email...");
+    try {
+        const attachmentPayloads = await Promise.all(
+            attachments.map(async (file) => ({
+                filename: file.name,
+                contentType: file.type,
+                content: await fileToBase64(file),
+            }))
+        );
+
+        const response = await fetch('/api/send', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                email: user.email,
+                password: user.password,
+                from: `"${user.name}" <${user.email}>`,
+                to, cc, bcc, subject, body,
+                attachments: attachmentPayloads,
+            }),
+        });
+        
+        const result = await response.json();
+        
+        if (response.ok && result.success) {
+            const conversation = allConversations.find(c => c.id === composeState.conversationId);
+            const newEmail: Email = {
+                id: `email-${Date.now()}`,
+                conversationId: conversation?.id || `conv-${Date.now()}`,
+                senderName: user.name,
+                senderEmail: user.email,
+                recipientEmail: to, cc, bcc, subject, body,
+                snippet: body.replace(/<[^>]*>?/gm, '').substring(0, 100),
+                timestamp: new Date().toISOString(),
+                isRead: true,
+                folderId: SystemFolder.SENT,
+                labelIds: [],
+                attachments: attachments.map(f => ({fileName: f.name, fileSize: f.size, mimeType: f.type})),
+            };
+            
+            setEmails(prev => {
+                const existing = draftId ? prev.filter(e => e.id !== draftId) : prev;
+                return [...existing, newEmail];
+            });
+            addToast("Message sent successfully.");
+        } else {
+            addToast(`Failed to send email: ${result.message || "Unknown server error"}`, { duration: 5000 });
+        }
+    } catch (error: any) {
+        console.error('Failed to send email:', error);
+        addToast(`Failed to send email: ${error.message}`, { duration: 5000 });
+    }
+
+  }, [user, allConversations, composeState.conversationId, addToast]);
   
   const saveDraft = useCallback((data: SendEmailData, draftId?: string): string => {
       const { to, cc, bcc, subject, body } = data;
