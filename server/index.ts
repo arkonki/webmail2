@@ -1,96 +1,144 @@
-import * as express from 'express';
+
+import express, { Request, Response, NextFunction } from 'express';
 import cors from 'cors';
 import { ImapFlow } from 'imapflow';
 import dotenv from 'dotenv';
 import { simpleParser } from 'mailparser';
 import nodemailer from 'nodemailer';
+import jwt from 'jsonwebtoken';
+import crypto from 'crypto';
 
 dotenv.config();
+
+// Augment the Express Request type
+declare global {
+    namespace Express {
+        interface Request {
+            auth?: {
+                email: string;
+                password: string;
+            };
+        }
+    }
+}
+
+// --- Security Configuration & Validation ---
+if (!process.env.JWT_SECRET || !process.env.ENCRYPTION_KEY) {
+    console.error('FATAL ERROR: JWT_SECRET and ENCRYPTION_KEY environment variables must be set.');
+    process.exit(1);
+}
+if (process.env.ENCRYPTION_KEY.length !== 64) {
+    console.error('FATAL ERROR: ENCRYPTION_KEY must be a 64-character hex string (32 bytes).');
+    process.exit(1);
+}
+
+const JWT_SECRET = process.env.JWT_SECRET;
+const ALGORITHM = 'aes-256-gcm';
+// The encryption key must be 32 bytes for aes-256-gcm, which is 64 hex characters.
+const ENCRYPTION_KEY = Buffer.from(process.env.ENCRYPTION_KEY, 'hex');
+const IV_LENGTH = 16;
+const AUTH_TAG_LENGTH = 16;
+
+
+// --- Crypto Helper Functions ---
+function encrypt(text: string): string {
+  const iv = crypto.randomBytes(IV_LENGTH);
+  const cipher = crypto.createCipheriv(ALGORITHM, ENCRYPTION_KEY, iv);
+  const encrypted = Buffer.concat([cipher.update(text, 'utf8'), cipher.final()]);
+  const authTag = cipher.getAuthTag();
+  // Prepend IV and AuthTag to the encrypted data for use in decryption
+  return Buffer.concat([iv, authTag, encrypted]).toString('hex');
+}
+
+function decrypt(hex: string): string {
+  const buffer = Buffer.from(hex, 'hex');
+  const iv = buffer.slice(0, IV_LENGTH);
+  const authTag = buffer.slice(IV_LENGTH, IV_LENGTH + AUTH_TAG_LENGTH);
+  const encrypted = buffer.slice(IV_LENGTH + AUTH_TAG_LENGTH);
+  const decipher = crypto.createDecipheriv(ALGORITHM, ENCRYPTION_KEY, iv);
+  decipher.setAuthTag(authTag);
+  const decrypted = Buffer.concat([decipher.update(encrypted), decipher.final()]);
+  return decrypted.toString('utf8');
+}
+
 
 const app: express.Application = express();
 const port = 3001;
 
-// Use a general CORS configuration for development to allow all origins.
-// This is more robust for local testing than a specific origin.
 app.use(cors());
-app.use(express.json({ limit: '10mb' })); // Increase limit for attachments
+app.use(express.json({ limit: '10mb' }));
+
+// --- Authentication Middleware ---
+const authMiddleware = (req: Request, res: Response, next: NextFunction) => {
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+        return res.status(401).json({ success: false, message: 'Authorization token is required.' });
+    }
+    const token = authHeader.split(' ')[1];
+    try {
+        const decoded = jwt.verify(token, JWT_SECRET) as { email: string; encryptedPass: string };
+        const password = decrypt(decoded.encryptedPass);
+        req.auth = { email: decoded.email, password };
+        next();
+    } catch (error) {
+        return res.status(401).json({ success: false, message: 'Invalid or expired token.' });
+    }
+};
 
 // In-memory store for scheduled jobs. In a real production app, this should be a persistent store like Redis.
 const scheduledJobs = new Map<string, NodeJS.Timeout>();
 
-app.post('/api/login', async (req: express.Request, res: express.Response) => {
-    const { email, password } = req.body;
+// --- API Endpoints ---
 
+app.post('/api/login', async (req: Request, res: Response) => {
+    const { email, password } = req.body;
     if (!email || !password) {
         return res.status(400).json({ success: false, message: 'Email and password are required.' });
     }
 
     const client = new ImapFlow({
-        host: 'mail.veebimajutus.ee',
-        port: 993,
-        secure: true,
-        auth: {
-            user: email,
-            pass: password,
-        },
-        logger: false // Set to true for detailed logging
+        host: 'mail.veebimajutus.ee', port: 993, secure: true,
+        auth: { user: email, pass: password },
+        logger: false
     });
 
     try {
         await client.connect();
-        // If connect succeeds, authentication was successful.
         await client.logout();
-        res.json({ success: true, message: 'Authentication successful.' });
+
+        const encryptedPass = encrypt(password);
+        const token = jwt.sign({ email, encryptedPass }, JWT_SECRET, { expiresIn: '8h' });
+
+        res.json({ success: true, message: 'Authentication successful.', token });
     } catch (err: any) {
         console.error('IMAP login failed:', err.message);
-        // Avoid leaking detailed server errors to the client.
         res.status(401).json({ success: false, message: 'Invalid credentials or connection issue.' });
     }
 });
 
-app.post('/api/folders', async (req: express.Request, res: express.Response) => {
-    const { email, password } = req.body;
+app.post('/api/folders', authMiddleware, async (req: Request, res: Response) => {
+    const { email, password } = req.auth!;
     const logPrefix = `[FOLDERS FOR ${email}]`;
 
-    if (!email || !password) {
-        return res.status(400).json({ success: false, message: 'Email and password are required.' });
-    }
-
     const client = new ImapFlow({
-        host: 'mail.veebimajutus.ee',
-        port: 993,
-        secure: true,
-        auth: { user: email, pass: password },
-        logger: false,
+        host: 'mail.veebimajutus.ee', port: 993, secure: true,
+        auth: { user: email, pass: password }, logger: false,
     });
 
     try {
         console.log(`${logPrefix} Connecting to list folders...`);
         await client.connect();
-        console.log(`${logPrefix} Connected. Listing folders...`);
-
         let folders = await client.list();
-        
-        const requiredFolders = {
-            '\\Sent': 'Sent',
-            '\\Drafts': 'Drafts',
-            '\\Junk': 'Spam',
-            '\\Trash': 'Trash'
-        };
-
+        const requiredFolders = { '\\Sent': 'Sent', '\\Drafts': 'Drafts', '\\Junk': 'Spam', '\\Trash': 'Trash' };
         const existingSpecialUseFolders = new Set(folders.map(f => f.specialUse).filter(Boolean));
 
         for (const [specialUse, name] of Object.entries(requiredFolders)) {
             if (!existingSpecialUseFolders.has(specialUse)) {
                 console.log(`${logPrefix} System folder for ${specialUse} (${name}) not found. Creating...`);
                 try {
-                    // Check if a folder with that name already exists, just without the flag
                     const folderExists = folders.some(f => f.path === name);
                     if (!folderExists) {
                          await client.mailboxCreate(name);
-                         console.log(`${logPrefix} Created folder: ${name}`);
-                    } else {
-                         console.log(`${logPrefix} Folder '${name}' already exists but lacks the special-use flag. The server may assign it automatically.`);
                     }
                 } catch (createError: any) {
                     console.warn(`${logPrefix} Could not create folder ${name}. It may already exist. Error: ${createError.message}`);
@@ -98,109 +146,59 @@ app.post('/api/folders', async (req: express.Request, res: express.Response) => 
             }
         }
         
-        // List again to get the full, updated list with correct flags
         folders = await client.list();
-
         await client.logout();
-        console.log(`${logPrefix} Successfully retrieved and verified system folders.`);
-
         const mailboxes = folders.map(folder => ({
-            path: folder.path,
-            name: folder.name,
-            specialUse: folder.specialUse || undefined,
-            delimiter: folder.delimiter,
+            path: folder.path, name: folder.name,
+            specialUse: folder.specialUse || undefined, delimiter: folder.delimiter,
         }));
-
         res.json({ success: true, mailboxes });
-
     } catch (err: any) {
         console.error(`${logPrefix} Failed to list/create folders:`, err);
         res.status(500).json({ success: false, message: 'Failed to manage mail folders.' });
     }
 });
 
-app.post('/api/sync', async (req: express.Request, res: express.Response) => {
-    const { email, password } = req.body;
+app.post('/api/sync', authMiddleware, async (req: Request, res: Response) => {
+    const { email, password } = req.auth!;
     const logPrefix = `[SYNC FOR ${email}]`;
-
-    if (!email || !password) {
-        return res.status(400).json({ success: false, message: 'Email and password are required.' });
-    }
-
     const client = new ImapFlow({
-        host: 'mail.veebimajutus.ee',
-        port: 993,
-        secure: true,
-        auth: {
-            user: email,
-            pass: password,
-        },
-        logger: false,
+        host: 'mail.veebimajutus.ee', port: 993, secure: true,
+        auth: { user: email, pass: password }, logger: false,
     });
-
     const emails = [];
-
     try {
         console.log(`${logPrefix} Starting sync...`);
         await client.connect();
-        console.log(`${logPrefix} IMAP client connected.`);
         const lock = await client.getMailboxLock('INBOX');
-        console.log(`${logPrefix} Mailbox 'INBOX' locked.`);
         try {
             if (client.mailbox && client.mailbox.exists) {
                 console.log(`${logPrefix} Mailbox exists. Found ${client.mailbox.exists} messages.`);
                 const fetchFrom = Math.max(1, client.mailbox.exists - 49);
-                console.log(`${logPrefix} Fetching messages from sequence ${fetchFrom} to *.`);
-                
-                let processedCount = 0;
                 for await (let msg of client.fetch(`${fetchFrom}:*`, { uid: true, flags: true, source: true, envelope: true })) {
                     try {
                         const parsed = await simpleParser(msg.source);
-                        processedCount++;
-                        console.log(`${logPrefix} Processing message UID ${msg.uid}, Subject: ${parsed.subject}`);
-
-                        const normalizedSubject = (parsed.subject || '')
-                            .replace(/^(Re|Fwd|Fw):\s*/i, '')
-                            .trim();
-
-                        const labelIds = [];
-                        if (msg.flags.has('\\Flagged')) {
-                            labelIds.push('Starred');
-                        }
-                        
+                        const normalizedSubject = (parsed.subject || '').replace(/^(Re|Fwd|Fw):\s*/i, '').trim();
                         const getAddress = (addressObject: any) => {
-                            if (!addressObject || !addressObject.value || addressObject.value.length === 0) {
-                                return { address: 'unknown@example.com', name: 'Unknown' };
-                            }
+                            if (!addressObject?.value?.length) return { address: 'unknown@example.com', name: 'Unknown' };
                             const value = addressObject.value[0];
-                            return {
-                                address: value.address || 'undisclosed-recipients@example.com',
-                                name: value.name || (value.address ? value.address.split('@')[0] : 'Unknown')
-                            };
+                            return { address: value.address || 'undisclosed-recipients@example.com', name: value.name || value.address?.split('@')[0] || 'Unknown' };
                         };
-                        
                         const sender = getAddress(parsed.from);
                         const recipient = getAddress(parsed.to);
-                        // If recipient is undisclosed, fall back to the logged-in user's email
-                        const recipientEmail = recipient.address === 'undisclosed-recipients@example.com' ? email : recipient.address;
-
-
                         emails.push({
                             id: msg.uid.toString(),
                             conversationId: normalizedSubject || `conv-${parsed.messageId || msg.uid}`,
-                            senderName: sender.name,
-                            senderEmail: sender.address,
-                            recipientEmail: recipientEmail,
+                            senderName: sender.name, senderEmail: sender.address,
+                            recipientEmail: recipient.address === 'undisclosed-recipients@example.com' ? email : recipient.address,
                             subject: parsed.subject || '(no subject)',
                             body: parsed.html || parsed.textAsHtml || parsed.text || '',
                             snippet: (parsed.text || '').substring(0, 120).replace(/\s+/g, ' ').trim(),
                             timestamp: (parsed.date || new Date()).toISOString(),
-                            isRead: msg.flags.has('\\Seen'),
-                            folderId: 'INBOX', // Sync only works on INBOX for now
-                            labelIds: labelIds,
+                            isRead: msg.flags.has('\\Seen'), folderId: 'INBOX',
+                            labelIds: msg.flags.has('\\Flagged') ? ['Starred'] : [],
                             attachments: (parsed.attachments || []).map(att => ({
-                                fileName: att.filename || 'untitled',
-                                fileSize: att.size || 0,
+                                fileName: att.filename || 'untitled', fileSize: att.size || 0,
                                 mimeType: att.contentType || 'application/octet-stream',
                                 url: `data:${att.contentType || 'application/octet-stream'};base64,${att.content?.toString('base64') || ''}`
                             })),
@@ -208,19 +206,11 @@ app.post('/api/sync', async (req: express.Request, res: express.Response) => {
                         });
                     } catch (parseError: any) {
                         console.error(`${logPrefix} SKIPPING: Failed to parse message UID ${msg.uid}. Error:`, parseError.message);
-                        // Continue to the next message instead of crashing
                     }
                 }
-                 console.log(`${logPrefix} Finished processing loop. Total emails successfully parsed: ${emails.length}`);
-            } else {
-                console.log(`${logPrefix} Mailbox does not exist or is empty.`);
             }
-        } finally {
-            lock.release();
-            console.log(`${logPrefix} Mailbox lock released.`);
-        }
+        } finally { lock.release(); }
         await client.logout();
-        console.log(`${logPrefix} IMAP client logged out.`);
         res.json({ success: true, emails: emails.reverse() });
     } catch (err: any) {
         console.error(`${logPrefix} Full error:`, err);
@@ -228,157 +218,86 @@ app.post('/api/sync', async (req: express.Request, res: express.Response) => {
     }
 });
 
-app.post('/api/test-connection', async (req: express.Request, res: express.Response) => {
+// Note: test-connection remains unprotected as it's a developer tool for explicit password testing.
+app.post('/api/test-connection', async (req: Request, res: Response) => {
     const { email, password } = req.body;
-    const logPrefix = `[TEST FOR ${email}]`;
-
-    if (!email || !password) {
-        return res.status(400).json({ success: false, message: 'Email and password are required.' });
-    }
-
-    const client = new ImapFlow({
-        host: 'mail.veebimajutus.ee',
-        port: 993,
-        secure: true,
-        auth: { user: email, pass: password },
-        logger: false,
-    });
-
+    if (!email || !password) return res.status(400).json({ success: false, message: 'Email and password are required.' });
+    const client = new ImapFlow({ host: 'mail.veebimajutus.ee', port: 993, secure: true, auth: { user: email, pass: password }, logger: false });
     try {
-        console.log(`${logPrefix} Attempting to connect...`);
         await client.connect();
-        console.log(`${logPrefix} Connection successful. Checking INBOX...`);
         const mailbox = await client.mailboxOpen('INBOX');
         const messageCount = mailbox.exists;
-        console.log(`${logPrefix} INBOX opened. Found ${messageCount} messages.`);
         await client.logout();
-        console.log(`${logPrefix} Logout successful.`);
         res.json({ success: true, message: `Connection successful! Found ${messageCount} messages in INBOX.` });
     } catch (err: any) {
-        console.error(`${logPrefix} Test connection failed:`, err);
         res.status(401).json({ success: false, message: `Connection failed: ${err.message}` });
     }
 });
 
-app.post('/api/send', async (req: express.Request, res: express.Response) => {
-    const { email, password, from, to, cc, bcc, subject, body, attachments } = req.body;
-    const logPrefix = `[SEND FOR ${email}]`;
-
-    if (!email || !password || !to) {
-        return res.status(400).json({ success: false, message: 'Missing required fields for sending email.' });
-    }
+app.post('/api/send', authMiddleware, async (req: Request, res: Response) => {
+    const { email, password } = req.auth!;
+    const { from, to, cc, bcc, subject, body, attachments } = req.body;
+    if (!to) return res.status(400).json({ success: false, message: 'Recipient is required.' });
 
     const transporter = nodemailer.createTransport({
-        host: 'mail.veebimajutus.ee',
-        port: 465, // Use 465 for SSL
-        secure: true, // true for 465, false for other ports
-        auth: {
-            user: email,
-            pass: password,
-        },
+        host: 'mail.veebimajutus.ee', port: 465, secure: true,
+        auth: { user: email, pass: password },
     });
-
     const mailOptions = {
-        from, // e.g., '"Your Name" <your.email@example.com>'
-        to,
-        cc,
-        bcc,
-        subject,
-        html: body,
+        from, to, cc, bcc, subject, html: body,
         attachments: (attachments || []).map((att: any) => ({
-            filename: att.filename,
-            content: att.content,
-            encoding: 'base64',
-            contentType: att.contentType,
+            filename: att.filename, content: att.content,
+            encoding: 'base64', contentType: att.contentType,
         })),
     };
-
     try {
-        console.log(`${logPrefix} Attempting to send email to ${to}...`);
         await transporter.sendMail(mailOptions);
-        console.log(`${logPrefix} Email sent successfully.`);
         res.json({ success: true, message: 'Email sent successfully.' });
     } catch (error: any) {
-        console.error(`${logPrefix} Failed to send email:`, error);
         res.status(500).json({ success: false, message: `Failed to send email: ${error.message}` });
     }
 });
 
-app.post('/api/schedule-send', async (req: express.Request, res: express.Response) => {
-    const { email, password, from, to, cc, bcc, subject, body, attachments, scheduleDate } = req.body;
-    const logPrefix = `[SCHEDULE FOR ${email}]`;
+app.post('/api/schedule-send', authMiddleware, async (req: Request, res: Response) => {
+    const { email, password } = req.auth!;
+    const { from, to, cc, bcc, subject, body, attachments, scheduleDate } = req.body;
+    if (!to || !scheduleDate) return res.status(400).json({ success: false, message: 'Missing required fields for scheduling.' });
 
-    if (!email || !password || !to || !scheduleDate) {
-        return res.status(400).json({ success: false, message: 'Missing required fields for scheduling an email.' });
-    }
-
-    const sendTime = new Date(scheduleDate).getTime();
-    const now = Date.now();
-    const delay = sendTime - now;
-
-    if (delay <= 0) {
-        return res.status(400).json({ success: false, message: 'Schedule date must be in the future.' });
-    }
+    const delay = new Date(scheduleDate).getTime() - Date.now();
+    if (delay <= 0) return res.status(400).json({ success: false, message: 'Schedule date must be in the future.' });
 
     const jobId = `job-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
-
     const transporter = nodemailer.createTransport({
-        host: 'mail.veebimajutus.ee',
-        port: 465,
-        secure: true,
+        host: 'mail.veebimajutus.ee', port: 465, secure: true,
         auth: { user: email, pass: password },
     });
-
-    const mailOptions = {
-        from, to, cc, bcc, subject, html: body,
-        attachments: (attachments || []).map((att: any) => ({
-            filename: att.filename,
-            content: att.content,
-            encoding: 'base64',
-            contentType: att.contentType,
-        })),
-    };
+    const mailOptions = { from, to, cc, bcc, subject, html: body, attachments: (attachments || []).map((att: any) => ({
+        filename: att.filename, content: att.content, encoding: 'base64', contentType: att.contentType,
+    }))};
 
     const timeoutId = setTimeout(() => {
-        console.log(`${logPrefix} Sending scheduled email job ${jobId} to ${to}...`);
         transporter.sendMail(mailOptions)
-            .then(() => {
-                console.log(`${logPrefix} Successfully sent scheduled email job ${jobId}.`);
-            })
-            .catch(error => {
-                console.error(`${logPrefix} Failed to send scheduled email job ${jobId}:`, error);
-            })
-            .finally(() => {
-                scheduledJobs.delete(jobId);
-            });
+            .then(() => console.log(`[SCHEDULE] Successfully sent job ${jobId}.`))
+            .catch(error => console.error(`[SCHEDULE] Failed to send job ${jobId}:`, error))
+            .finally(() => scheduledJobs.delete(jobId));
     }, delay);
 
     scheduledJobs.set(jobId, timeoutId);
-    console.log(`${logPrefix} Email job ${jobId} scheduled to be sent in ${delay}ms.`);
     res.json({ success: true, message: 'Email scheduled successfully.', jobId });
 });
 
-app.post('/api/cancel-scheduled-send', async (req: express.Request, res: express.Response) => {
+app.post('/api/cancel-scheduled-send', authMiddleware, async (req: Request, res: Response) => {
     const { jobId } = req.body;
-    const logPrefix = `[CANCEL SCHEDULE]`;
-
-    if (!jobId) {
-        return res.status(400).json({ success: false, message: 'Job ID is required.' });
-    }
-
+    if (!jobId) return res.status(400).json({ success: false, message: 'Job ID is required.' });
     const timeoutId = scheduledJobs.get(jobId);
-
     if (timeoutId) {
         clearTimeout(timeoutId);
         scheduledJobs.delete(jobId);
-        console.log(`${logPrefix} Cancelled scheduled job ${jobId}.`);
         res.json({ success: true, message: 'Scheduled send cancelled.' });
     } else {
-        console.warn(`${logPrefix} Could not find scheduled job ${jobId} to cancel. It may have already been sent.`);
         res.status(404).json({ success: false, message: 'Scheduled job not found.' });
     }
 });
-
 
 app.listen(port, () => {
     console.log(`[server]: Server is running at http://localhost:${port}`);

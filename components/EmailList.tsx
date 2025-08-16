@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { FixedSizeList as List } from 'react-window';
 import { useAppContext } from '../context/AppContext';
@@ -27,7 +28,7 @@ const BulkActionBar = () => {
     const [isMovePopoverOpen, setIsMovePopoverOpen] = useState(false);
     const [isSnoozePopoverOpen, setIsSnoozePopoverOpen] = useState(false);
     const count = selectedConversationIds.size;
-    const conversationIds = Array.from(selectedConversationIds);
+    const conversationIds = [...selectedConversationIds];
 
     useEffect(() => {
         if (shortcutTrigger?.type === 'openLabelPopover') {

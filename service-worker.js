@@ -1,3 +1,5 @@
+/// <reference lib="webworker" />
+
 // service-worker.js
 
 const CACHE_NAME = 'webmail-v7';
@@ -6,7 +8,7 @@ const APP_SHELL_URLS = [
   '/index.html'
 ];
 
-self.addEventListener('install', event => {
+self.addEventListener('install', (/** @type {ExtendableEvent} */ event) => {
   event.waitUntil(
     caches.open(CACHE_NAME).then(cache => {
       console.log('Service Worker: Caching App Shell');
@@ -15,7 +17,7 @@ self.addEventListener('install', event => {
   );
 });
 
-self.addEventListener('activate', event => {
+self.addEventListener('activate', (/** @type {ExtendableEvent} */ event) => {
   const cacheWhitelist = [CACHE_NAME];
   event.waitUntil(
     caches.keys().then(cacheNames => {
@@ -31,7 +33,7 @@ self.addEventListener('activate', event => {
   );
 });
 
-self.addEventListener('fetch', event => {
+self.addEventListener('fetch', (/** @type {FetchEvent} */ event) => {
   // Ignore API requests and let the browser handle them directly.
   if (event.request.url.includes('/api/')) {
     return; 
