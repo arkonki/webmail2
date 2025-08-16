@@ -171,3 +171,9 @@ export interface AppSettings {
   templates: Template[];
   displayDensity: DisplayDensity;
 }
+
+export interface AppLog {
+  timestamp: string;
+  message: string;
+  level: 'info' | 'error';
+}

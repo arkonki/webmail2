@@ -8,8 +8,10 @@ import LabelSettings from './LabelSettings';
 import FolderSettings from './FolderSettings';
 import IdentitySettings from './IdentitySettings';
 import TemplateSettings from './TemplateSettings';
+import DeveloperSettings from './DeveloperSettings';
+import { BeakerIcon } from './icons/BeakerIcon';
 
-type SettingsTab = 'general' | 'labels' | 'folders' | 'identities' | 'signature' | 'autoResponder' | 'rules' | 'templates';
+type SettingsTab = 'general' | 'labels' | 'folders' | 'identities' | 'signature' | 'autoResponder' | 'rules' | 'templates' | 'developer';
 
 const Settings: React.FC = () => {
     const [activeTab, setActiveTab] = useState<SettingsTab>('general');
@@ -24,19 +26,21 @@ const Settings: React.FC = () => {
             case 'autoResponder': return <AutoResponderSettings />;
             case 'rules': return <RulesSettings />;
             case 'templates': return <TemplateSettings />;
+            case 'developer': return <DeveloperSettings />;
             default: return null;
         }
     };
     
-    const TabButton: React.FC<{tab: SettingsTab, label: string}> = ({ tab, label }) => (
+    const TabButton: React.FC<{tab: SettingsTab, label: string, icon?: React.ReactNode}> = ({ tab, label, icon }) => (
         <button
             onClick={() => setActiveTab(tab)}
-            className={`px-4 py-2 w-full text-left text-sm font-medium rounded-md transition-colors ${
+            className={`px-4 py-2 w-full text-left text-sm font-medium rounded-md transition-colors flex items-center gap-3 ${
                 activeTab === tab 
                 ? 'bg-primary text-white' 
                 : 'text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-700'
             }`}
         >
+            {icon}
             {label}
         </button>
     );
@@ -57,6 +61,8 @@ const Settings: React.FC = () => {
                     <TabButton tab="autoResponder" label="Auto Responder" />
                     <TabButton tab="rules" label="Rules" />
                     <TabButton tab="templates" label="Templates" />
+                    <div className="my-1 border-t border-outline dark:border-dark-outline"></div>
+                    <TabButton tab="developer" label="Developer" icon={<BeakerIcon className="w-5 h-5"/>} />
                 </div>
                 <div className="flex-grow bg-white dark:bg-dark-surface-container p-6 rounded-lg border border-outline dark:border-dark-outline min-h-[500px]">
                     {renderTabContent()}

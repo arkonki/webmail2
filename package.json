@@ -1,13 +1,14 @@
 {
-  "name": "webmail-client-mock",
+  "name": "webmail-client",
   "version": "1.0.0",
-  "description": "A modern webmail client UI with mock data",
+  "description": "A modern webmail client UI",
   "type": "module",
   "main": "index.js",
   "scripts": {
     "dev": "concurrently \"vite\" \"tsx watch server/index.ts\"",
     "build": "vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "start": "tsx server/index.ts"
   },
   "keywords": [
     "react",
@@ -19,18 +20,18 @@
   "license": "ISC",
   "dependencies": {
     "cors": "^2.8.5",
+    "dompurify": "^3.2.6",
     "dotenv": "^16.4.5",
     "express": "^4.19.2",
     "imapflow": "^1.0.160",
-    "mailparser": "^3.7.1",
     "nodemailer": "^6.9.14",
     "react": "^19.1.1",
-    "react-dom": "^19.1.1"
+    "react-dom": "^19.1.1",
+    "react-window": "^1.8.11"
   },
   "devDependencies": {
     "@types/cors": "^2.8.17",
     "@types/express": "^4.17.21",
-    "@types/mailparser": "^3.4.4",
     "@types/react": "^18.3.3",
     "@types/react-dom": "^18.3.0",
     "@vitejs/plugin-react": "^4.3.1",

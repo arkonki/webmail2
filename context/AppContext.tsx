@@ -1,5 +1,5 @@
 import React, { createContext, useState, useContext, ReactNode, useMemo, useCallback, useEffect } from 'react';
-import { Email, ActionType, Label, Conversation, User, AppSettings, Signature, AutoResponder, Rule, SystemLabel, Contact, ContactGroup, SystemFolder, UserFolder, Attachment, FolderTreeNode, Identity, Template, DisplayDensity } from '../types';
+import { Email, ActionType, Label, Conversation, User, AppSettings, Signature, AutoResponder, Rule, SystemLabel, Contact, ContactGroup, SystemFolder, UserFolder, Attachment, FolderTreeNode, Identity, Template, DisplayDensity, AppLog } from '../types';
 import { useToast } from './ToastContext';
 
 
@@ -65,6 +65,7 @@ interface AppContextType {
   shortcutTrigger: ShortcutTrigger | null;
   isOnline: boolean;
   isDraggingEmail: boolean;
+  appLogs: AppLog[];
   
   // Auth
   login: (email: string, pass: string) => Promise<void>;
@@ -120,6 +121,7 @@ interface AppContextType {
   handleKeyboardShortcut: (e: KeyboardEvent) => void;
   clearShortcutTrigger: () => void;
   setIsDraggingEmail: (isDragging: boolean) => void;
+  addAppLog: (message: string, level?: 'info' | 'error') => void;
   
   // Settings
   updateSignature: (signature: Signature) => void;
@@ -239,6 +241,17 @@ export const AppContextProvider = ({ children }: { children: ReactNode }): React
   const [shortcutTrigger, setShortcutTrigger] = useState<ShortcutTrigger | null>(null);
   const [isOnline, setIsOnline] = useState(navigator.onLine);
   const [isDraggingEmail, setIsDraggingEmail] = useState(false);
+  const [appLogs, setAppLogs] = useState<AppLog[]>([]);
+
+  const addAppLog = useCallback((message: string, level: 'info' | 'error' = 'info') => {
+    const newLog: AppLog = {
+        timestamp: new Date().toISOString(),
+        message,
+        level,
+    };
+    setAppLogs(prev => [newLog, ...prev.slice(0, 99)]); // Keep last 100 logs
+  }, []);
+
 
   useEffect(() => {
     const handleOnline = () => setIsOnline(true);
@@ -277,6 +290,7 @@ export const AppContextProvider = ({ children }: { children: ReactNode }): React
     if (sessionUserStr) {
       const sessionUser = JSON.parse(sessionUserStr);
       setUser(sessionUser);
+      addAppLog(`Session restored for ${sessionUser.email}`);
 
       const loadFromStorage = (key: string, setter: React.Dispatch<any>, defaultValue: any) => {
           const savedData = localStorage.getItem(`${sessionUser.email}-${key}`);
@@ -306,10 +320,11 @@ export const AppContextProvider = ({ children }: { children: ReactNode }): React
         setUser(null);
     }
     setTimeout(() => setIsLoading(false), 500);
-  }, []);
+  }, [addAppLog]);
 
   const login = useCallback(async (email: string, pass: string) => {
     setIsLoading(true);
+    addAppLog(`Attempting login for ${email}...`);
     try {
         const response = await fetch('/api/login', {
             method: 'POST',
@@ -322,6 +337,7 @@ export const AppContextProvider = ({ children }: { children: ReactNode }): React
         const data = await response.json();
 
         if (response.ok && data.success) {
+            addAppLog(`Login successful for ${email}.`);
             Object.keys(localStorage).forEach(key => {
                 if (key.startsWith(`${email}-`)) {
                     localStorage.removeItem(key);
@@ -342,6 +358,7 @@ export const AppContextProvider = ({ children }: { children: ReactNode }): React
             setIsSetupComplete(false);
 
             setIsSyncing(true);
+            addAppLog("Starting email sync with server...");
             addToast("Syncing emails with server...");
             try {
                 const syncResponse = await fetch('/api/sync', {
@@ -350,39 +367,46 @@ export const AppContextProvider = ({ children }: { children: ReactNode }): React
                     body: JSON.stringify({ email, password: pass }),
                 });
                 const syncData = await syncResponse.json();
+                console.log('Sync data from server:', syncData);
                 if (syncResponse.ok && syncData.success) {
                     setEmails(syncData.emails);
+                    addAppLog(`Sync complete. Synced ${syncData.emails.length} emails.`);
                     addToast(`Synced ${syncData.emails.length} emails successfully.`, { duration: 4000 });
                 } else {
+                    addAppLog(`Email sync failed: ${syncData.message || "Unknown error"}`, 'error');
                     addToast(syncData.message || "Failed to sync emails.", { duration: 5000 });
                 }
-            } catch (syncError) {
+            } catch (syncError: any) {
                 console.error('Email sync request failed:', syncError);
+                addAppLog(`Email sync request failed: ${syncError.message}`, 'error');
                 addToast("Failed to connect to the server for email sync.", { duration: 5000 });
             } finally {
                 setIsSyncing(false);
             }
         } else {
+            addAppLog(`Login failed: ${data.message || "Invalid credentials."}`, 'error');
             addToast(data.message || "Invalid credentials.", { duration: 5000 });
             setUser(null);
         }
-    } catch (error) {
+    } catch (error: any) {
         console.error('Login request failed:', error);
+        addAppLog(`Login request failed: ${error.message}`, 'error');
         addToast("Failed to connect to the server. Please try again later.", { duration: 5000 });
         setUser(null);
     } finally {
         setIsLoading(false);
     }
-  }, [addToast]);
+  }, [addToast, addAppLog]);
 
   const logout = useCallback(() => {
+    addAppLog(`User ${user?.email} logged out.`);
     setUser(null);
     localStorage.removeItem('sessionUser');
     setEmails([]);
     _setCurrentSelection({type: 'folder', id: SystemFolder.INBOX});
     setSelectedConversationId(null);
     addToast("You have been logged out.");
-  }, [addToast]);
+  }, [addToast, user, addAppLog]);
 
   const deselectAllConversations = useCallback(() => setSelectedConversationIds(new Set()), []);
   
@@ -1103,13 +1127,13 @@ const flattenedFolderTree = useMemo<FolderTreeNode[]>(() => {
   
 
   const value = {
-    user, emails, labels, userFolders, conversations: allConversations, currentSelection, selectedConversationId, composeState, searchQuery, selectedConversationIds, theme, displayedConversations, isSidebarCollapsed, sidebarSectionOrder, view, appSettings, contacts, contactGroups, selectedContactId, selectedGroupId, isLoading, isSyncing, isSetupComplete, notificationPermission, isShortcutsModalOpen, shortcutTrigger, focusedConversationId, isOnline, isDraggingEmail,
+    user, emails, labels, userFolders, conversations: allConversations, currentSelection, selectedConversationId, composeState, searchQuery, selectedConversationIds, theme, displayedConversations, isSidebarCollapsed, sidebarSectionOrder, view, appSettings, contacts, contactGroups, selectedContactId, selectedGroupId, isLoading, isSyncing, isSetupComplete, notificationPermission, isShortcutsModalOpen, shortcutTrigger, focusedConversationId, isOnline, isDraggingEmail, appLogs,
     login, logout, checkUserSession,
     setCurrentSelection, setSelectedConversationId, setSearchQuery, 
     openCompose, closeCompose, toggleMinimizeCompose, sendEmail, saveDraft, deleteDraft, cancelSend,
     moveConversations, toggleLabel, applyLabel, removeLabel, deleteConversation, archiveConversation, markAsRead, markAsUnread, markAsSpam, markAsNotSpam, snoozeConversation, unsnoozeConversation, unsubscribeFromSender,
     toggleConversationSelection, selectAllConversations, deselectAllConversations, bulkDelete, bulkMarkAsRead, bulkMarkAsUnread,
-    toggleTheme, toggleSidebar, reorderSidebarSections, handleEscape, navigateConversationList, openFocusedConversation, setView, setIsShortcutsModalOpen, handleKeyboardShortcut, clearShortcutTrigger, setIsDraggingEmail,
+    toggleTheme, toggleSidebar, reorderSidebarSections, handleEscape, navigateConversationList, openFocusedConversation, setView, setIsShortcutsModalOpen, handleKeyboardShortcut, clearShortcutTrigger, setIsDraggingEmail, addAppLog,
     updateSignature, updateAutoResponder, addRule, deleteRule, updateSendDelay, completeFirstTimeSetup, updateIdentity, requestNotificationPermission, updateNotificationSettings, updateConversationView, updateBlockExternalImages, updateDisplayDensity, createTemplate, updateTemplate, deleteTemplate,
     createLabel, updateLabel, deleteLabel, reorderLabel,
     createFolder, updateFolder, deleteFolder, getFolderDescendants, folderTree, flattenedFolderTree, reorderFolder,

@@ -1,4 +1,4 @@
-import express from 'express';
+import express, { Express, Request, Response } from 'express';
 import cors from 'cors';
 import { ImapFlow } from 'imapflow';
 import dotenv from 'dotenv';
@@ -6,7 +6,7 @@ import { simpleParser } from 'mailparser';
 
 dotenv.config();
 
-const app: express.Express = express();
+const app: Express = express();
 const port = 3001;
 
 // Use a general CORS configuration for development to allow all origins.
@@ -14,7 +14,7 @@ const port = 3001;
 app.use(cors());
 app.use(express.json());
 
-app.post('/api/login', async (req: express.Request, res: express.Response) => {
+app.post('/api/login', async (req: Request, res: Response) => {
     const { email, password } = req.body;
 
     if (!email || !password) {
@@ -44,8 +44,9 @@ app.post('/api/login', async (req: express.Request, res: express.Response) => {
     }
 });
 
-app.post('/api/sync', async (req: express.Request, res: express.Response) => {
+app.post('/api/sync', async (req: Request, res: Response) => {
     const { email, password } = req.body;
+    const logPrefix = `[SYNC FOR ${email}]`;
 
     if (!email || !password) {
         return res.status(400).json({ success: false, message: 'Email and password are required.' });
@@ -65,13 +66,22 @@ app.post('/api/sync', async (req: express.Request, res: express.Response) => {
     const emails = [];
 
     try {
+        console.log(`${logPrefix} Starting sync...`);
         await client.connect();
+        console.log(`${logPrefix} IMAP client connected.`);
         const lock = await client.getMailboxLock('INBOX');
+        console.log(`${logPrefix} Mailbox 'INBOX' locked.`);
         try {
             if (client.mailbox && client.mailbox.exists) {
+                console.log(`${logPrefix} Mailbox exists. Found ${client.mailbox.exists} messages.`);
                 const fetchFrom = Math.max(1, client.mailbox.exists - 49);
+                console.log(`${logPrefix} Fetching messages from sequence ${fetchFrom} to *.`);
+                
+                let processedCount = 0;
                 for await (let msg of client.fetch(`${fetchFrom}:*`, { uid: true, flags: true, source: true, envelope: true })) {
                     const parsed = await simpleParser(msg.source);
+                    processedCount++;
+                    console.log(`${logPrefix} Processing message UID ${msg.uid}, Subject: ${parsed.subject}`);
 
                     const normalizedSubject = (parsed.subject || '')
                         .replace(/^(Re|Fwd|Fw):\s*/i, '')
@@ -82,14 +92,18 @@ app.post('/api/sync', async (req: express.Request, res: express.Response) => {
                         labelIds.push('Starred');
                     }
                     
-                    const sender = parsed.from?.value[0] || { address: 'unknown', name: 'Unknown' };
+                    const fromAddressObject = Array.isArray(parsed.from) ? parsed.from[0] : parsed.from;
+                    const sender = fromAddressObject?.value[0] || { address: 'unknown', name: 'Unknown' };
+
+                    const toAddressObject = Array.isArray(parsed.to) ? parsed.to[0] : parsed.to;
+                    const recipient = toAddressObject?.value[0];
 
                     emails.push({
                         id: msg.uid.toString(),
-                        conversationId: normalizedSubject || `conv-${parsed.messageId}`,
+                        conversationId: normalizedSubject || `conv-${parsed.messageId || msg.uid}`,
                         senderName: sender.name || sender.address?.split('@')[0],
                         senderEmail: sender.address,
-                        recipientEmail: parsed.to?.value[0]?.address || email,
+                        recipientEmail: recipient?.address || email,
                         subject: parsed.subject || '(no subject)',
                         body: parsed.html || parsed.textAsHtml || '', // Prefer HTML body
                         snippet: (parsed.text || '').substring(0, 120).replace(/\s+/g, ' ').trim(),
@@ -106,15 +120,52 @@ app.post('/api/sync', async (req: express.Request, res: express.Response) => {
                         messageId: parsed.messageId,
                     });
                 }
+                 console.log(`${logPrefix} Finished processing. Total emails parsed: ${processedCount}`);
+            } else {
+                console.log(`${logPrefix} Mailbox does not exist or is empty.`);
             }
         } finally {
             lock.release();
+            console.log(`${logPrefix} Mailbox lock released.`);
         }
         await client.logout();
+        console.log(`${logPrefix} IMAP client logged out.`);
         res.json({ success: true, emails: emails.reverse() });
     } catch (err: any) {
-        console.error('IMAP sync failed:', err.message);
-        res.status(500).json({ success: false, message: 'Failed to sync emails.' });
+        console.error(`${logPrefix} Full error:`, err);
+        res.status(500).json({ success: false, message: 'Failed to sync emails due to a server error.' });
+    }
+});
+
+app.post('/api/test-connection', async (req: Request, res: Response) => {
+    const { email, password } = req.body;
+    const logPrefix = `[TEST FOR ${email}]`;
+
+    if (!email || !password) {
+        return res.status(400).json({ success: false, message: 'Email and password are required.' });
+    }
+
+    const client = new ImapFlow({
+        host: 'mail.veebimajutus.ee',
+        port: 993,
+        secure: true,
+        auth: { user: email, pass: password },
+        logger: false,
+    });
+
+    try {
+        console.log(`${logPrefix} Attempting to connect...`);
+        await client.connect();
+        console.log(`${logPrefix} Connection successful. Checking INBOX...`);
+        const mailbox = await client.mailboxOpen('INBOX');
+        const messageCount = mailbox.exists;
+        console.log(`${logPrefix} INBOX opened. Found ${messageCount} messages.`);
+        await client.logout();
+        console.log(`${logPrefix} Logout successful.`);
+        res.json({ success: true, message: `Connection successful! Found ${messageCount} messages in INBOX.` });
+    } catch (err: any) {
+        console.error(`${logPrefix} Test connection failed:`, err);
+        res.status(401).json({ success: false, message: `Connection failed: ${err.message}` });
     }
 });
 
