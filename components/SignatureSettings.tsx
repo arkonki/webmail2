@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useAppContext } from '../context/AppContext';
 import RichTextToolbar from './RichTextToolbar';
+import DOMPurify from 'dompurify';
 
 const SignatureSettings: React.FC = () => {
     const { appSettings, updateSignature } = useAppContext();
@@ -19,7 +20,8 @@ const SignatureSettings: React.FC = () => {
     }, [body, editorMode]);
 
     const handleSave = () => {
-        updateSignature({ isEnabled, body });
+        const sanitizedBody = DOMPurify.sanitize(body);
+        updateSignature({ isEnabled, body: sanitizedBody });
     };
 
     const handleBodyChangeRich = (e: React.FormEvent<HTMLDivElement>) => {
@@ -99,20 +101,20 @@ const SignatureSettings: React.FC = () => {
                                 <RichTextToolbar onInsertImage={() => imageInputRef.current?.click()} />
                             </div>
                         )}
-                        <div className="min-h-[150px] p-2">
+                        <div className="max-h-80 overflow-y-auto p-2">
                              {editorMode === 'rich' ? (
                                 <div
                                     ref={contentRef}
                                     contentEditable={isEnabled}
                                     onInput={handleBodyChangeRich}
-                                    className="w-full h-full text-sm resize-none focus:outline-none signature-editor"
+                                    className="w-full min-h-[150px] text-sm resize-none focus:outline-none signature-editor"
                                 />
                             ) : (
                                 <textarea
                                     value={body}
                                     onChange={handleBodyChangeHtml}
                                     disabled={!isEnabled}
-                                    className="w-full h-full min-h-[150px] text-sm resize-y focus:outline-none bg-transparent font-mono text-on-surface dark:text-dark-on-surface"
+                                    className="w-full min-h-[150px] text-sm focus:outline-none bg-transparent font-mono text-on-surface dark:text-dark-on-surface"
                                     placeholder="<p>Enter your <b>HTML</b> signature here.</p>"
                                 />
                             )}

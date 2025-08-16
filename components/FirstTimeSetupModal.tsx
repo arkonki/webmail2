@@ -3,7 +3,7 @@ import React, { useState } from 'react';
 import { useAppContext } from '../context/AppContext';
 import { Identity } from '../types';
 import { UserIcon } from './icons/UserIcon';
-import { UserGroupIcon } from './icons/UserGroupIcon';
+import { BuildingOfficeIcon } from './icons/BuildingOfficeIcon';
 import { MailIcon } from './icons/MailIcon';
 
 const FirstTimeSetupModal: React.FC = () => {
@@ -63,7 +63,7 @@ const FirstTimeSetupModal: React.FC = () => {
                         <label className="block text-lg font-semibold text-gray-800 dark:text-gray-200 mb-3">What kind of account is this?</label>
                         <div className="space-y-3">
                             <AccountTypeOption type="personal" label="Personal" description="For an individual person." icon={<UserIcon className="w-6 h-6"/>} />
-                            <AccountTypeOption type="business" label="Business / Shared" description="For a team, company, or role (e.g., info@, support@)." icon={<UserGroupIcon className="w-6 h-6"/>} />
+                            <AccountTypeOption type="business" label="Business / Shared" description="For a team, company, or role (e.g., info@, support@)." icon={<BuildingOfficeIcon className="w-6 h-6"/>} />
                         </div>
                     </div>
 

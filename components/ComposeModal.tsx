@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect, useRef } from 'react';
 import { useAppContext } from '../context/AppContext';
 import { XMarkIcon } from './icons/XMarkIcon';
@@ -13,6 +12,7 @@ import Avatar from './Avatar';
 import { MinusIcon } from './icons/MinusIcon';
 import { SparklesIcon } from './icons/SparklesIcon';
 import TemplatesPopover from './TemplatesPopover';
+import DOMPurify from 'dompurify';
 
 const formatFileSize = (bytes: number): string => {
   if (bytes === 0) return '0 Bytes';
@@ -74,6 +74,8 @@ const ComposeModal: React.FC = () => {
             setShowCc(false);
             setShowBcc(false);
 
+            const sanitizedSignature = DOMPurify.sanitize(appSettings.signature.body);
+
             if (action === ActionType.DRAFT && email) {
                 setTo(email.recipientEmail || '');
                 setCc(email.cc || '');
@@ -87,15 +89,15 @@ const ComposeModal: React.FC = () => {
                 setSubject(email.subject.startsWith('Re:') ? email.subject : `Re: ${email.subject}`);
                 const formattedDate = new Date(email.timestamp).toLocaleString();
                 const replyContent = bodyPrefix ? `<p>${bodyPrefix}</p>` : '<p><br></p>';
-                const signature = appSettings.signature.isEnabled ? `<br><br>${appSettings.signature.body}` : '';
-                finalBody = `${replyContent}${signature}<br><blockquote class="dark:border-gray-600">On ${formattedDate}, ${email.senderName} &lt;${email.senderEmail}&gt; wrote:<br>${email.body}</blockquote>`;
+                const sanitizedOriginalBody = DOMPurify.sanitize(email.body);
+                finalBody = `${replyContent}${sanitizedSignature}<br><blockquote class="dark:border-gray-600">On ${formattedDate}, ${email.senderName} &lt;${email.senderEmail}&gt; wrote:<br>${sanitizedOriginalBody}</blockquote>`;
             } else if (action === ActionType.FORWARD && email) {
                 setSubject(email.subject.startsWith('Fwd:') ? email.subject : `Fwd: ${email.subject}`);
                 const formattedDate = new Date(email.timestamp).toLocaleString();
-                const signature = appSettings.signature.isEnabled ? `<br><br>${appSettings.signature.body}` : '';
-                finalBody = `<p><br></p>${signature}<br><blockquote class="dark:border-gray-600">--- Forwarded message ---<br><b>From:</b> ${email.senderName} &lt;${email.senderEmail}&gt;<br><b>Date:</b> ${formattedDate}<br><b>Subject:</b> ${email.subject}<br><br>${email.body}</blockquote>`;
+                const sanitizedOriginalBody = DOMPurify.sanitize(email.body);
+                finalBody = `<p><br></p>${sanitizedSignature}<br><blockquote class="dark:border-gray-600">--- Forwarded message ---<br><b>From:</b> ${email.senderName} &lt;${email.senderEmail}&gt;<br><b>Date:</b> ${formattedDate}<br><b>Subject:</b> ${email.subject}<br><br>${sanitizedOriginalBody}</blockquote>`;
             } else {
-                finalBody = appSettings.signature.isEnabled ? `<p><br></p><br>${appSettings.signature.body}` : '';
+                finalBody = appSettings.signature.isEnabled ? `<p><br></p><br>${sanitizedSignature}` : '';
             }
 
             setBody(finalBody);
@@ -123,7 +125,7 @@ const ComposeModal: React.FC = () => {
   const insertTemplate = (html: string) => {
     if (contentRef.current) {
         contentRef.current.focus();
-        document.execCommand('insertHTML', false, html);
+        document.execCommand('insertHTML', false, DOMPurify.sanitize(html));
         setBody(contentRef.current.innerHTML);
         setIsTemplatesPopoverOpen(false);
     }

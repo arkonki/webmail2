@@ -1,4 +1,3 @@
-
 import React, { useEffect } from 'react';
 import Header from './Header';
 import Sidebar from './Sidebar';
@@ -10,7 +9,7 @@ import ContactsView from './ContactsView';
 import { useAppContext } from '../context/AppContext';
 
 const MainLayout: React.FC = () => {
-  const { composeState, view, selectedConversationId, handleKeyboardShortcut, isSidebarCollapsed } = useAppContext();
+  const { composeState, view, selectedConversationId, handleKeyboardShortcut, isSidebarCollapsed, isDraggingEmail } = useAppContext();
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -47,7 +46,7 @@ const MainLayout: React.FC = () => {
       <Header />
       <div className="flex flex-grow overflow-hidden">
         <Sidebar />
-        <main className={`flex-grow transition-all duration-300 ease-in-out flex flex-col ${isSidebarCollapsed ? 'ml-20' : 'ml-64'}`}>
+        <main className={`flex-grow transition-all duration-300 ease-in-out flex flex-col ${isSidebarCollapsed ? 'ml-20' : 'ml-64'} ${isDraggingEmail ? 'opacity-50' : ''}`}>
           {renderView()}
         </main>
       </div>

@@ -96,7 +96,7 @@ const SearchBar: React.FC = () => {
                 <input
                     ref={inputRef}
                     type="search"
-                    placeholder="Search mail (e.g., from:name is:starred)"
+                    placeholder={"Search mail"}
                     value={localQuery}
                     onChange={handleInputChange}
                     onFocus={handleInputChange}

@@ -1,4 +1,3 @@
-
 import React, { useState, useRef, useMemo } from 'react';
 import { Conversation, SystemLabel, ActionType, SystemFolder } from '../types';
 import { useAppContext } from '../context/AppContext';
@@ -16,7 +15,7 @@ interface ConversationListItemProps {
 }
 
 const ConversationListItem: React.FC<ConversationListItemProps> = ({ conversation, style }) => {
-  const { user, setSelectedConversationId, toggleLabel, markAsRead, deleteConversation, selectedConversationIds, toggleConversationSelection, openCompose, focusedConversationId, labels, unsubscribeFromSender, appSettings } = useAppContext();
+  const { user, setSelectedConversationId, toggleLabel, markAsRead, deleteConversation, selectedConversationIds, toggleConversationSelection, openCompose, focusedConversationId, labels, unsubscribeFromSender, appSettings, setIsDraggingEmail } = useAppContext();
   const { conversationView, displayDensity } = appSettings;
   const isFocused = focusedConversationId === conversation.id;
   const isChecked = selectedConversationIds.has(conversation.id);
@@ -83,6 +82,7 @@ const ConversationListItem: React.FC<ConversationListItemProps> = ({ conversatio
   }
 
   const handleDragStart = (e: React.DragEvent<HTMLLIElement>) => {
+    setIsDraggingEmail(true);
     const idsToMove = selectedConversationIds.has(conversation.id) ? Array.from(selectedConversationIds) : [conversation.id];
     e.dataTransfer.effectAllowed = 'move';
     e.dataTransfer.setData('application/json', JSON.stringify({ conversationIds: idsToMove }));
@@ -100,6 +100,7 @@ const ConversationListItem: React.FC<ConversationListItemProps> = ({ conversatio
   };
 
   const handleDragEnd = () => {
+    setIsDraggingEmail(false);
     if (dragPreviewRef.current) {
         document.body.removeChild(dragPreviewRef.current);
         dragPreviewRef.current = null;

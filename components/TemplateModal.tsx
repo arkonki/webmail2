@@ -4,6 +4,7 @@ import ReactDOM from 'react-dom';
 import { useAppContext } from '../context/AppContext';
 import { Template } from '../types';
 import RichTextToolbar from './RichTextToolbar';
+import DOMPurify from 'dompurify';
 
 interface TemplateModalProps {
   isOpen: boolean;
@@ -41,11 +42,12 @@ const TemplateModal: React.FC<TemplateModalProps> = ({ isOpen, onClose, template
         if (!name.trim()) return;
 
         const currentBody = contentRef.current?.innerHTML || '';
+        const sanitizedBody = DOMPurify.sanitize(currentBody);
         
         if (template) {
-            updateTemplate(template.id, { name, body: currentBody });
+            updateTemplate(template.id, { name, body: sanitizedBody });
         } else {
-            createTemplate(name, currentBody);
+            createTemplate(name, sanitizedBody);
         }
         onClose();
     };
@@ -73,7 +75,7 @@ const TemplateModal: React.FC<TemplateModalProps> = ({ isOpen, onClose, template
     const modalContent = (
         <div className="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4" onClick={onClose}>
             <div className="bg-white dark:bg-dark-surface-container rounded-lg shadow-xl p-6 w-full max-w-2xl" onClick={e => e.stopPropagation()}>
-                <h2 className="text-lg font-bold mb-4">{template ? 'Edit' : 'Create'} Template</h2>
+                <h2 className="text-lg font-bold mb-4">{template ? "Edit Template" : "Create Template"}</h2>
                 <form onSubmit={handleSubmit} className="space-y-4">
                     <div>
                         <label htmlFor="template-name" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Template name</label>

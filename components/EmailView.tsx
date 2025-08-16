@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { useAppContext } from '../context/AppContext';
 import { ArrowUturnLeftIcon } from './icons/ArrowUturnLeftIcon';
@@ -31,6 +30,7 @@ import AttachmentPreviewModal from './AttachmentPreviewModal';
 import { ClockIcon } from './icons/ClockIcon';
 import SnoozePopover from './SnoozePopover';
 import { PhotoSlashIcon } from './icons/PhotoSlashIcon';
+import DOMPurify from 'dompurify';
 
 
 const formatFileSize = (bytes: number): string => {
@@ -58,12 +58,14 @@ const SingleEmailInThread: React.FC<{ email: Email; isExpanded: boolean; onToggl
 
     const { processedBody, hasBlockedImages } = useMemo(() => {
         const shouldBlock = appSettings.blockExternalImages && !forceShowImages;
-        if (!shouldBlock) {
-            return { processedBody: email.body, hasBlockedImages: false };
-        }
-
-        let blockedCount = 0;
+        
         try {
+            if (!shouldBlock) {
+                // If not blocking, just sanitize the original body.
+                return { processedBody: DOMPurify.sanitize(email.body), hasBlockedImages: false };
+            }
+
+            let blockedCount = 0;
             const parser = new DOMParser();
             const doc = parser.parseFromString(email.body, 'text/html');
             const images = doc.querySelectorAll('img');
@@ -78,14 +80,22 @@ const SingleEmailInThread: React.FC<{ email: Email; isExpanded: boolean; onToggl
                 }
             });
 
+            const processedHtml = doc.body.innerHTML;
+            // Sanitize AFTER our modifications for image blocking.
+            const sanitizedHtml = DOMPurify.sanitize(processedHtml, {
+                // We need to allow these attributes for our image blocking placeholder to work.
+                // DOMPurify is smart enough to still block malicious values in these attributes.
+                ADD_ATTR: ['class', 'alt', 'data-original-src']
+            });
+
             return {
-                processedBody: doc.body.innerHTML,
+                processedBody: sanitizedHtml,
                 hasBlockedImages: blockedCount > 0
             };
         } catch (e) {
-            console.error("Error sanitizing email body:", e);
-            // Fallback to original body if parsing fails
-            return { processedBody: email.body, hasBlockedImages: false };
+            console.error("Error processing email body:", e);
+            // Fallback to sanitizing the original body if processing fails.
+            return { processedBody: DOMPurify.sanitize(email.body), hasBlockedImages: false };
         }
     }, [email.body, appSettings.blockExternalImages, forceShowImages]);
 
@@ -273,7 +283,7 @@ const EmailView: React.FC = () => {
                         <strong>Date:</strong> ${new Date(email.timestamp).toLocaleString('en-US', { dateStyle: 'full', timeStyle: 'short' })}
                     </div>
                     <div class="email-body">
-                        ${email.body}
+                        ${DOMPurify.sanitize(email.body)}
                     </div>
                 </div>
             `;

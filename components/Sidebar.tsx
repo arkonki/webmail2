@@ -43,9 +43,10 @@ interface NavItemProps {
   onEdit?: () => void;
   onDelete?: () => void;
   isBeingDragged?: boolean;
-  isDragOver?: boolean;
+  isDropTarget?: boolean;
   dropPosition?: 'top' | 'bottom' | null;
   onDragStartHandle?: (e: React.DragEvent) => void;
+  onDragEnterItem?: (e: React.DragEvent) => void;
   onDragOverItem?: (e: React.DragEvent) => void;
   onDropItem?: (e: React.DragEvent) => void;
   onDragEndHandle?: (e: React.DragEvent) => void;
@@ -54,26 +55,28 @@ interface NavItemProps {
 
 const NavItem: React.FC<NavItemProps> = (props) => {
   const { name, icon, isActive, onClick, isSidebarCollapsed, isEditable, onEdit, onDelete,
-    isBeingDragged, isDragOver, dropPosition,
-    onDragStartHandle, onDragOverItem, onDropItem, onDragEndHandle, onDragLeaveItem } = props;
+    isBeingDragged, isDropTarget, dropPosition,
+    onDragStartHandle, onDragEnterItem, onDragOverItem, onDropItem, onDragEndHandle, onDragLeaveItem } = props;
 
   const justifyContent = isSidebarCollapsed ? 'justify-center' : 'justify-start';
   const baseClasses = `group relative w-full flex items-center ${justifyContent} px-4 py-2 my-1 text-sm rounded-r-full cursor-pointer transition-all duration-200 ease-in-out`;
   const activeClasses = 'bg-primary text-white font-bold';
   const inactiveClasses = 'text-gray-700 dark:text-dark-on-surface hover:bg-gray-200 dark:hover:bg-dark-surface-container';
   const beingDraggedClasses = isBeingDragged ? 'opacity-40' : '';
+  const dropTargetClasses = isDropTarget ? 'bg-primary/20 dark:bg-primary/30 ring-2 ring-primary ring-inset' : '';
 
   return (
     <li
-      className={`${baseClasses} ${isActive ? activeClasses : inactiveClasses} ${beingDraggedClasses}`}
+      className={`${baseClasses} ${isActive ? activeClasses : inactiveClasses} ${beingDraggedClasses} ${dropTargetClasses}`}
       onClick={onClick}
       title={isSidebarCollapsed ? name : undefined}
+      onDragEnter={onDragEnterItem}
       onDragOver={onDragOverItem}
       onDrop={onDropItem}
       onDragLeave={onDragLeaveItem}
       onDragEnd={onDragEndHandle}
     >
-        {isDragOver && dropPosition === 'top' && <div className="absolute top-0 left-4 right-0 h-0.5 bg-primary z-10" />}
+        {isDropTarget && !isSidebarCollapsed && dropPosition === 'top' && <div className="absolute top-0 left-4 right-0 h-0.5 bg-primary z-10" />}
         <div className="flex items-center flex-grow min-w-0">
           <div className={`flex items-center min-w-0 ${isSidebarCollapsed ? '' : 'space-x-4'}`}>
             {icon}
@@ -87,7 +90,7 @@ const NavItem: React.FC<NavItemProps> = (props) => {
                 onDragStart={onDragStartHandle}
                 onClick={e => e.stopPropagation()}
                 className="p-1 rounded-full hover:bg-black/10 dark:hover:bg-white/10 cursor-move"
-                title="Drag to reorder"
+                title={"Drag to reorder"}
             >
                 <ArrowsUpDownIcon className="w-4 h-4" />
             </button>
@@ -95,7 +98,7 @@ const NavItem: React.FC<NavItemProps> = (props) => {
             <button onClick={(e) => { e.stopPropagation(); onDelete?.(); }} className="p-1 rounded-full hover:bg-black/10 dark:hover:bg-white/10"><TrashIcon className="w-4 h-4" /></button>
         </div>
       )}
-      {isDragOver && dropPosition === 'bottom' && <div className="absolute bottom-0 left-4 right-0 h-0.5 bg-primary z-10" />}
+      {isDropTarget && !isSidebarCollapsed && dropPosition === 'bottom' && <div className="absolute bottom-0 left-4 right-0 h-0.5 bg-primary z-10" />}
     </li>
   );
 };
@@ -104,7 +107,8 @@ const NavItem: React.FC<NavItemProps> = (props) => {
 const Sidebar: React.FC = () => {
   const { 
     currentSelection, setCurrentSelection, openCompose, labels, userFolders, folderTree, isSidebarCollapsed, 
-    applyLabel, moveConversations, deleteFolder, view, reorderLabel, reorderFolder
+    sidebarSectionOrder, reorderSidebarSections,
+    applyLabel, moveConversations, deleteFolder, view, reorderLabel, reorderFolder, isDraggingEmail
   } = useAppContext();
   const [isLabelModalOpen, setIsLabelModalOpen] = useState(false);
   const [editingLabel, setEditingLabel] = useState<Label | null>(null);
@@ -118,9 +122,10 @@ const Sidebar: React.FC = () => {
     return saved ? new Set(JSON.parse(saved)) : new Set();
   });
   
-  const [draggedItem, setDraggedItem] = useState<{id: string, type: 'label' | 'folder'} | null>(null);
+  const [draggedItem, setDraggedItem] = useState<{id: string, type: 'label' | 'folder' | 'section'} | null>(null);
   const [dragOverItemId, setDragOverItemId] = useState<string | null>(null);
   const [dropPosition, setDropPosition] = useState<'top' | 'bottom' | null>(null);
+  const dragCounter = useRef(0);
   
   useEffect(() => { localStorage.setItem('isLabelsCollapsed', String(isLabelsCollapsed)); }, [isLabelsCollapsed]);
   useEffect(() => { localStorage.setItem('isFoldersCollapsed', String(isFoldersCollapsed)); }, [isFoldersCollapsed]);
@@ -138,42 +143,74 @@ const Sidebar: React.FC = () => {
     })
   }
   
-  const handleDragStart = (e: React.DragEvent, type: 'label' | 'folder', id: string) => {
+  // Handlers for re-ordering items within the sidebar
+  const handleReorderDragStart = (e: React.DragEvent, type: 'label' | 'folder' | 'section', id: string) => {
     e.stopPropagation();
     setDraggedItem({ type, id });
     e.dataTransfer.setData('application/x-webmail-reorder', JSON.stringify({id, type}));
     e.dataTransfer.effectAllowed = 'move';
   };
   
-  const handleDragOver = (e: React.DragEvent, type: 'label' | 'folder', item: Label | UserFolder) => {
-    e.preventDefault();
-    e.stopPropagation();
-    if (!draggedItem || draggedItem.id === item.id || draggedItem.type !== type) {
-      setDragOverItemId(null);
-      return;
-    }
-    
-    if (type === 'folder') {
-      const draggedFolder = userFolders.find(f => f.id === draggedItem.id);
-      if (draggedFolder?.parentId !== (item as UserFolder).parentId) {
-        setDragOverItemId(null);
-        return;
-      }
-    }
-
-    const rect = e.currentTarget.getBoundingClientRect();
-    const midpoint = rect.top + rect.height / 2;
-    const newPosition = e.clientY < midpoint ? 'top' : 'bottom';
-    
-    setDropPosition(newPosition);
-    setDragOverItemId(item.id);
+  const handleDragEnd = () => {
+    setDraggedItem(null);
+    setDragOverItemId(null);
+    setDropPosition(null);
+    dragCounter.current = 0;
   };
   
-  const handleDrop = (e: React.DragEvent, dropTargetType: 'label' | 'folder' | 'system-folder' | 'system-label', item: Label | UserFolder | {id: string}) => {
+  const handleDragEnter = (e: React.DragEvent, id: string) => {
+    if (isDraggingEmail || draggedItem) {
+        e.preventDefault();
+        e.stopPropagation();
+        dragCounter.current++;
+        setDragOverItemId(id);
+    }
+  };
+  
+  const handleDragLeave = (e: React.DragEvent) => {
+    if (isDraggingEmail || draggedItem) {
+        e.preventDefault();
+        e.stopPropagation();
+        dragCounter.current--;
+        if (dragCounter.current === 0) {
+            setDragOverItemId(null);
+            setDropPosition(null);
+        }
+    }
+  };
+
+  const handleDragOver = (e: React.DragEvent, type: 'label' | 'folder' | 'section', item: Label | UserFolder | { id: string }) => {
+    // Logic for dropping emails onto items
+    if (isDraggingEmail) {
+      e.preventDefault();
+      e.stopPropagation();
+      e.dataTransfer.dropEffect = 'move';
+      return;
+    }
+
+    // Logic for reordering items
+    if (draggedItem) {
+        e.preventDefault();
+        e.stopPropagation();
+        if (draggedItem.id === item.id || draggedItem.type !== type) {
+            return;
+        }
+        if (type === 'folder') {
+            const draggedFolder = userFolders.find(f => f.id === draggedItem.id);
+            if (draggedFolder?.parentId !== (item as UserFolder).parentId) return;
+        }
+        const rect = e.currentTarget.getBoundingClientRect();
+        const midpoint = rect.top + rect.height / 2;
+        setDropPosition(e.clientY < midpoint ? 'top' : 'bottom');
+    }
+  };
+
+  const performDrop = (e: React.DragEvent, dropTargetType: 'label' | 'folder' | 'system-folder' | 'system-label' | 'section', item: Label | UserFolder | {id: string}) => {
     e.preventDefault();
     e.stopPropagation();
 
     try {
+      // First, check for re-order drop
       const reorderDataStr = e.dataTransfer.getData('application/x-webmail-reorder');
       if (reorderDataStr) {
         const reorderData = JSON.parse(reorderDataStr);
@@ -181,35 +218,32 @@ const Sidebar: React.FC = () => {
           reorderLabel(reorderData.id, item.id, dropPosition);
         } else if (reorderData.type === 'folder' && dropTargetType === 'folder' && dropPosition) {
           reorderFolder(reorderData.id, item.id, dropPosition);
+        } else if (reorderData.type === 'section' && dropTargetType === 'section') {
+            reorderSidebarSections(reorderData.id, item.id as 'folders' | 'labels');
         }
-      } else {
-        const convDataStr = e.dataTransfer.getData('application/json');
-        if (convDataStr) {
+        return;
+      }
+      
+      // Second, check for email drop
+      const convDataStr = e.dataTransfer.getData('application/json');
+      if (convDataStr) {
           const convData = JSON.parse(convDataStr);
           if (convData.conversationIds) {
-            if (dropTargetType === 'label') {
+            if (dropTargetType === 'label' || dropTargetType === 'system-label') {
               applyLabel(convData.conversationIds, item.id);
             } else if (dropTargetType === 'folder' || dropTargetType === 'system-folder') {
               moveConversations(convData.conversationIds, item.id);
             }
           }
-        }
       }
     } catch (err) {
       console.error("Drop failed", err);
     }
-    handleDragEnd();
   };
 
-  const handleDragEnd = () => {
-    setDraggedItem(null);
-    setDragOverItemId(null);
-    setDropPosition(null);
-  };
-  
-  const handleDragLeave = () => {
-    setDragOverItemId(null);
-    setDropPosition(null);
+  const handleDrop = (e: React.DragEvent, dropTargetType: 'label' | 'folder' | 'system-folder' | 'system-label' | 'section', item: Label | UserFolder | {id: string}) => {
+    performDrop(e, dropTargetType, item);
+    handleDragEnd(); // Clean up all drag states
   };
 
   const handleOpenLabelModal = (label: Label | null = null) => {
@@ -249,9 +283,10 @@ const Sidebar: React.FC = () => {
                 onDelete={() => handleDeleteFolder(node)}
                 isEditable
                 isBeingDragged={draggedItem?.type === 'folder' && draggedItem.id === node.id}
-                isDragOver={dragOverItemId === node.id}
+                isDropTarget={dragOverItemId === node.id}
                 dropPosition={dragOverItemId === node.id ? dropPosition : null}
-                onDragStartHandle={(e) => handleDragStart(e, 'folder', node.id)}
+                onDragStartHandle={(e) => handleReorderDragStart(e, 'folder', node.id)}
+                onDragEnterItem={(e) => handleDragEnter(e, node.id)}
                 onDragOverItem={(e) => handleDragOver(e, 'folder', node)}
                 onDropItem={(e) => handleDrop(e, 'folder', node)}
                 onDragEndHandle={handleDragEnd}
@@ -264,6 +299,118 @@ const Sidebar: React.FC = () => {
       </React.Fragment>
     ));
   };
+  
+  const sections = {
+    folders: (
+      <div 
+        key="folders" 
+        className={`relative mt-4 pt-4 border-t border-outline dark:border-dark-outline transition-opacity ${draggedItem?.id === 'folders' ? 'opacity-40' : ''}`}
+        onDragEnter={(e) => handleDragEnter(e, 'folders')}
+        onDragOver={(e) => handleDragOver(e, 'section', {id: 'folders'})}
+        onDrop={(e) => handleDrop(e, 'section', {id: 'folders'})}
+        onDragLeave={handleDragLeave}
+        onDragEnd={handleDragEnd}
+      >
+        {dragOverItemId === 'folders' && !isSidebarCollapsed && dropPosition === 'top' && <div className="absolute top-0 left-0 right-0 h-1 bg-primary z-10" />}
+        <div className="group flex items-center justify-between px-4 mb-1">
+            <button
+                onClick={() => !isSidebarCollapsed && setIsFoldersCollapsed(p => !p)}
+                className={`flex items-center gap-2 flex-grow text-left ${isSidebarCollapsed ? 'cursor-default' : ''}`}
+                aria-expanded={!isFoldersCollapsed}
+                aria-controls="folder-list"
+            >
+                {!isSidebarCollapsed && <ChevronDownIcon className={`w-4 h-4 text-gray-500 dark:text-gray-400 transition-transform duration-200 ${isFoldersCollapsed ? '-rotate-90' : ''}`} />}
+                <h3 className="text-xs font-semibold uppercase text-gray-500 dark:text-gray-400">{isSidebarCollapsed ? "F" : "Folders"}</h3>
+            </button>
+            {!isSidebarCollapsed && (
+                <div className="flex items-center opacity-0 group-hover:opacity-100 transition-opacity duration-200">
+                    <button 
+                      draggable 
+                      onDragStart={(e) => handleReorderDragStart(e, 'section', 'folders')}
+                      onClick={e => e.stopPropagation()}
+                      className="p-1 rounded-full hover:bg-gray-300 dark:hover:bg-gray-600 cursor-move"
+                      title={"Reorder sections"}
+                    >
+                        <ArrowsUpDownIcon className="w-4 h-4 text-gray-500 dark:text-gray-400" />
+                    </button>
+                    <button onClick={() => handleOpenFolderModal(null)} className="p-1 rounded-full hover:bg-gray-300 dark:hover:bg-gray-600" title={"Create new folder"}>
+                        <PlusIcon className="w-4 h-4 text-gray-500 dark:text-gray-400" />
+                    </button>
+                </div>
+            )}
+        </div>
+        <ul id="folder-list" className={`transition-all duration-300 ease-in-out overflow-hidden ${isFoldersCollapsed && !isSidebarCollapsed ? 'max-h-0' : 'max-h-[500px]'}`}>
+            {renderFolderTree(folderTree)}
+        </ul>
+         {dragOverItemId === 'folders' && !isSidebarCollapsed && dropPosition === 'bottom' && <div className="absolute bottom-0 left-0 right-0 h-1 bg-primary z-10" />}
+      </div>
+    ),
+    labels: (
+      <div 
+        key="labels" 
+        className={`relative mt-4 pt-4 border-t border-outline dark:border-dark-outline transition-opacity ${draggedItem?.id === 'labels' ? 'opacity-40' : ''}`}
+        onDragEnter={(e) => handleDragEnter(e, 'labels')}
+        onDragOver={(e) => handleDragOver(e, 'section', {id: 'labels'})}
+        onDrop={(e) => handleDrop(e, 'section', {id: 'labels'})}
+        onDragLeave={handleDragLeave}
+        onDragEnd={handleDragEnd}
+      >
+        {dragOverItemId === 'labels' && !isSidebarCollapsed && dropPosition === 'top' && <div className="absolute top-0 left-0 right-0 h-1 bg-primary z-10" />}
+        <div className="group flex items-center justify-between px-4 mb-1">
+            <button
+                onClick={() => !isSidebarCollapsed && setIsLabelsCollapsed(p => !p)}
+                className={`flex items-center gap-2 flex-grow text-left ${isSidebarCollapsed ? 'cursor-default' : ''}`}
+                aria-expanded={!isLabelsCollapsed}
+                aria-controls="label-list"
+            >
+                {!isSidebarCollapsed && <ChevronDownIcon className={`w-4 h-4 text-gray-500 dark:text-gray-400 transition-transform duration-200 ${isLabelsCollapsed ? '-rotate-90' : ''}`} />}
+                <h3 className="text-xs font-semibold uppercase text-gray-500 dark:text-gray-400">{isSidebarCollapsed ? "L" : "Labels"}</h3>
+            </button>
+            {!isSidebarCollapsed && (
+                <div className="flex items-center opacity-0 group-hover:opacity-100 transition-opacity duration-200">
+                     <button 
+                      draggable 
+                      onDragStart={(e) => handleReorderDragStart(e, 'section', 'labels')}
+                      onClick={e => e.stopPropagation()}
+                      className="p-1 rounded-full hover:bg-gray-300 dark:hover:bg-gray-600 cursor-move"
+                      title={"Reorder sections"}
+                    >
+                        <ArrowsUpDownIcon className="w-4 h-4 text-gray-500 dark:text-gray-400" />
+                    </button>
+                    <button onClick={() => handleOpenLabelModal(null)} className="p-1 rounded-full hover:bg-gray-300 dark:hover:bg-gray-600" title={"Create new label"}>
+                        <PlusIcon className="w-4 h-4 text-gray-500 dark:text-gray-400" />
+                    </button>
+                </div>
+            )}
+        </div>
+        <ul id="label-list" className={`transition-all duration-300 ease-in-out overflow-hidden ${isLabelsCollapsed && !isSidebarCollapsed ? 'max-h-0' : 'max-h-[500px]'}`}>
+            {labels.map(label => (
+                <NavItem
+                    key={label.id}
+                    name={label.name}
+                    icon={<TagIcon className="w-5 h-5" style={{color: label.color}} />}
+                    isActive={currentSelection.type === 'label' && currentSelection.id === label.id && view === 'mail'}
+                    onClick={() => setCurrentSelection('label', label.id)}
+                    isSidebarCollapsed={isSidebarCollapsed}
+                    onEdit={() => handleOpenLabelModal(label)}
+                    onDelete={() => { /* Should be handled in settings */}}
+                    isEditable
+                    isBeingDragged={draggedItem?.type === 'label' && draggedItem.id === label.id}
+                    isDropTarget={dragOverItemId === label.id}
+                    dropPosition={dragOverItemId === label.id ? dropPosition : null}
+                    onDragStartHandle={(e) => handleReorderDragStart(e, 'label', label.id)}
+                    onDragEnterItem={(e) => handleDragEnter(e, label.id)}
+                    onDragOverItem={(e) => handleDragOver(e, 'label', label)}
+                    onDropItem={(e) => handleDrop(e, 'label', label)}
+                    onDragEndHandle={handleDragEnd}
+                    onDragLeaveItem={handleDragLeave}
+                />
+            ))}
+        </ul>
+        {dragOverItemId === 'labels' && !isSidebarCollapsed && dropPosition === 'bottom' && <div className="absolute bottom-0 left-0 right-0 h-1 bg-primary z-10" />}
+      </div>
+    )
+  };
 
 
   return (
@@ -272,7 +419,7 @@ const Sidebar: React.FC = () => {
         <button 
           onClick={() => openCompose()}
           className={`flex items-center w-full px-4 py-3 space-x-2 font-semibold text-gray-700 dark:text-gray-800 transition-all duration-150 bg-compose-accent rounded-2xl hover:shadow-lg justify-center`}
-          title={isSidebarCollapsed ? 'Compose' : undefined}
+          title={isSidebarCollapsed ? "Compose" : undefined}
           >
           <PencilIcon className="w-6 h-6" />
           {!isSidebarCollapsed && <span>Compose</span>}
@@ -289,13 +436,11 @@ const Sidebar: React.FC = () => {
                 isActive={currentSelection.type === 'folder' && currentSelection.id === folder && view === 'mail'}
                 onClick={() => setCurrentSelection('folder', folder)}
                 isSidebarCollapsed={isSidebarCollapsed}
+                isDropTarget={dragOverItemId === folder}
                 onDropItem={(e) => handleDrop(e, 'system-folder', {id: folder})}
-                onDragOverItem={(e) => {
-                    try {
-                        const data = JSON.parse(e.dataTransfer.getData('application/json'));
-                        if (data.conversationIds) e.preventDefault();
-                    } catch (err) {}
-                }}
+                onDragEnterItem={(e) => handleDragEnter(e, folder)}
+                onDragOverItem={(e) => { if (isDraggingEmail) e.preventDefault(); }}
+                onDragLeaveItem={handleDragLeave}
               />
             ))}
              <NavItem
@@ -305,13 +450,11 @@ const Sidebar: React.FC = () => {
                 isActive={currentSelection.type === 'label' && currentSelection.id === SystemLabel.STARRED && view === 'mail'}
                 onClick={() => setCurrentSelection('label', SystemLabel.STARRED)}
                 isSidebarCollapsed={isSidebarCollapsed}
+                isDropTarget={dragOverItemId === SystemLabel.STARRED}
                 onDropItem={(e) => handleDrop(e, 'system-label', {id: SystemLabel.STARRED})}
-                 onDragOverItem={(e) => {
-                    try {
-                        const data = JSON.parse(e.dataTransfer.getData('application/json'));
-                        if (data.conversationIds) e.preventDefault();
-                    } catch (err) {}
-                }}
+                onDragEnterItem={(e) => handleDragEnter(e, SystemLabel.STARRED)}
+                onDragOverItem={(e) => { if (isDraggingEmail) e.preventDefault(); }}
+                onDragLeaveItem={handleDragLeave}
               />
                <NavItem
                 key={SystemLabel.SNOOZED}
@@ -322,74 +465,7 @@ const Sidebar: React.FC = () => {
                 isSidebarCollapsed={isSidebarCollapsed}
               />
           </ul>
-
-            <div key="folders" className="mt-4 pt-4 border-t border-outline dark:border-dark-outline">
-                <div className="group flex items-center justify-between px-4 mb-1">
-                    <button
-                        onClick={() => !isSidebarCollapsed && setIsFoldersCollapsed(p => !p)}
-                        className={`flex items-center gap-2 flex-grow text-left ${isSidebarCollapsed ? 'cursor-default' : ''}`}
-                        aria-expanded={!isFoldersCollapsed}
-                        aria-controls="folder-list"
-                    >
-                        {!isSidebarCollapsed && <ChevronDownIcon className={`w-4 h-4 text-gray-500 dark:text-gray-400 transition-transform duration-200 ${isFoldersCollapsed ? '-rotate-90' : ''}`} />}
-                        <h3 className="text-xs font-semibold uppercase text-gray-500 dark:text-gray-400">{isSidebarCollapsed ? "F" : "Folders"}</h3>
-                    </button>
-                    {!isSidebarCollapsed && (
-                        <div className="flex items-center opacity-0 group-hover:opacity-100 transition-opacity duration-200">
-                            <button onClick={() => handleOpenFolderModal(null)} className="p-1 rounded-full hover:bg-gray-300 dark:hover:bg-gray-600" title="Create new folder">
-                                <PlusIcon className="w-4 h-4 text-gray-500 dark:text-gray-400" />
-                            </button>
-                        </div>
-                    )}
-                </div>
-                <ul id="folder-list" className={`transition-all duration-300 ease-in-out overflow-hidden ${isFoldersCollapsed && !isSidebarCollapsed ? 'max-h-0' : 'max-h-[500px]'}`}>
-                    {renderFolderTree(folderTree)}
-                </ul>
-            </div>
-          
-            <div key="labels" className="mt-4 pt-4 border-t border-outline dark:border-dark-outline">
-                <div className="group flex items-center justify-between px-4 mb-1">
-                    <button
-                        onClick={() => !isSidebarCollapsed && setIsLabelsCollapsed(p => !p)}
-                        className={`flex items-center gap-2 flex-grow text-left ${isSidebarCollapsed ? 'cursor-default' : ''}`}
-                        aria-expanded={!isLabelsCollapsed}
-                        aria-controls="label-list"
-                    >
-                        {!isSidebarCollapsed && <ChevronDownIcon className={`w-4 h-4 text-gray-500 dark:text-gray-400 transition-transform duration-200 ${isLabelsCollapsed ? '-rotate-90' : ''}`} />}
-                        <h3 className="text-xs font-semibold uppercase text-gray-500 dark:text-gray-400">{isSidebarCollapsed ? "L" : "Labels"}</h3>
-                    </button>
-                    {!isSidebarCollapsed && (
-                        <div className="flex items-center opacity-0 group-hover:opacity-100 transition-opacity duration-200">
-                            <button onClick={() => handleOpenLabelModal(null)} className="p-1 rounded-full hover:bg-gray-300 dark:hover:bg-gray-600" title="Create new label">
-                                <PlusIcon className="w-4 h-4 text-gray-500 dark:text-gray-400" />
-                            </button>
-                        </div>
-                    )}
-                </div>
-                <ul id="label-list" className={`transition-all duration-300 ease-in-out overflow-hidden ${isLabelsCollapsed && !isSidebarCollapsed ? 'max-h-0' : 'max-h-[500px]'}`}>
-                    {labels.map(label => (
-                        <NavItem
-                            key={label.id}
-                            name={label.name}
-                            icon={<TagIcon className="w-5 h-5" style={{color: label.color}} />}
-                            isActive={currentSelection.type === 'label' && currentSelection.id === label.id && view === 'mail'}
-                            onClick={() => setCurrentSelection('label', label.id)}
-                            isSidebarCollapsed={isSidebarCollapsed}
-                            onEdit={() => handleOpenLabelModal(label)}
-                            onDelete={() => { /* Should be handled in settings */}}
-                            isEditable
-                            isBeingDragged={draggedItem?.type === 'label' && draggedItem.id === label.id}
-                            isDragOver={dragOverItemId === label.id}
-                            dropPosition={dragOverItemId === label.id ? dropPosition : null}
-                            onDragStartHandle={(e) => handleDragStart(e, 'label', label.id)}
-                            onDragOverItem={(e) => handleDragOver(e, 'label', label)}
-                            onDropItem={(e) => handleDrop(e, 'label', label)}
-                            onDragEndHandle={handleDragEnd}
-                            onDragLeaveItem={handleDragLeave}
-                        />
-                    ))}
-                </ul>
-            </div>
+            {sidebarSectionOrder.map(sectionId => sections[sectionId])}
         </nav>
       </div>
       {isFolderModalOpen && (

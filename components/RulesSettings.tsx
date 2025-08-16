@@ -1,9 +1,11 @@
+
 import React, { useState } from 'react';
 import { useAppContext } from '../context/AppContext';
 import { TrashIcon } from './icons/TrashIcon';
 import { PlusCircleIcon } from './icons/PlusCircleIcon';
 import { Rule, SystemFolder } from '../types';
 import { ArrowRightIcon } from './icons/ArrowRightIcon';
+import { useToast } from '../context/ToastContext';
 
 type ConditionField = Rule['condition']['field'];
 type ActionType = Rule['action']['type'];
@@ -16,6 +18,7 @@ const Pill: React.FC<{ children: React.ReactNode; className?: string }> = ({ chi
 
 const RulesSettings: React.FC = () => {
     const { appSettings, labels, userFolders, addRule, deleteRule } = useAppContext();
+    const { addToast } = useToast();
     const [conditionField, setConditionField] = useState<ConditionField>('sender');
     const [conditionValue, setConditionValue] = useState('');
     const [actionType, setActionType] = useState<ActionType>('applyLabel');
@@ -25,7 +28,7 @@ const RulesSettings: React.FC = () => {
     const handleAddRule = (e: React.FormEvent) => {
         e.preventDefault();
         if (!conditionValue) {
-            alert('Please fill out all fields for the rule.');
+            addToast("Please fill out all fields for the rule.", { duration: 5000 });
             return;
         }
 
@@ -35,7 +38,7 @@ const RulesSettings: React.FC = () => {
                 action = { type: 'moveToFolder', folderId: actionFolderId };
                 break;
             case 'applyLabel':
-                if (!actionLabelId) { alert('Please select a label.'); return; }
+                if (!actionLabelId) { addToast("Please select a label.", { duration: 5000 }); return; }
                 action = { type: 'applyLabel', labelId: actionLabelId };
                 break;
             case 'star':
@@ -60,11 +63,11 @@ const RulesSettings: React.FC = () => {
         switch(rule.action.type) {
             case 'applyLabel': 
                 const label = labels.find(l => l.id === rule.action.labelId);
-                actionElement = <Pill className="bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200">Apply label: "{label?.name || 'unknown'}"</Pill>;
+                actionElement = <Pill className="bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200">{`Apply label: "${label?.name || 'unknown'}"`}</Pill>;
                 break;
             case 'moveToFolder':
                 const folderName = userFolders.find(f => f.id === rule.action.folderId)?.name || rule.action.folderId || 'unknown folder';
-                actionElement = <Pill className="bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200">Move to: "{folderName}"</Pill>;
+                actionElement = <Pill className="bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200">{`Move to: "${folderName}"`}</Pill>;
                 break;
             case 'star': actionElement = <Pill className="bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200">Star it</Pill>; break;
             case 'markAsRead': actionElement = <Pill className="bg-gray-200 text-gray-800 dark:bg-gray-600 dark:text-gray-100">Mark as read</Pill>; break;
@@ -128,7 +131,7 @@ const RulesSettings: React.FC = () => {
                                 className="p-2 border rounded-md bg-white dark:bg-dark-surface text-on-surface dark:text-dark-on-surface dark:border-dark-outline"
                                 disabled={labels.length === 0}
                             >
-                                {labels.length === 0 ? <option>Create a label first</option> : labels.map(label => <option key={label.id} value={label.id}>{label.name}</option>)}
+                                {labels.length === 0 ? <option>Create new label</option> : labels.map(label => <option key={label.id} value={label.id}>{label.name}</option>)}
                             </select>
                         )}
                          {actionType === 'moveToFolder' && (
@@ -138,7 +141,7 @@ const RulesSettings: React.FC = () => {
                                 className="p-2 border rounded-md bg-white dark:bg-dark-surface text-on-surface dark:text-dark-on-surface dark:border-dark-outline"
                             >
                                 {Object.values(SystemFolder).map(f => <option key={f} value={f}>{f}</option>)}
-                                <option disabled>-- User Folders --</option>
+                                <option disabled>-- Folders --</option>
                                 {userFolders.map(folder => <option key={folder.id} value={folder.id}>{folder.name}</option>)}
                             </select>
                         )}

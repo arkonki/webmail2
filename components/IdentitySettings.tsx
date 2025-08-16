@@ -3,7 +3,7 @@ import React, { useState, useEffect } from 'react';
 import { useAppContext } from '../context/AppContext';
 import { Identity } from '../types';
 import { UserIcon } from './icons/UserIcon';
-import { UserGroupIcon } from './icons/UserGroupIcon';
+import { BuildingOfficeIcon } from './icons/BuildingOfficeIcon';
 
 const IdentitySettings: React.FC = () => {
     const { appSettings, updateIdentity, user } = useAppContext();
@@ -79,7 +79,7 @@ const IdentitySettings: React.FC = () => {
                     <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Account Type</label>
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                         <AccountTypeOption type="personal" label="Personal" icon={<UserIcon className="w-5 h-5"/>} />
-                        <AccountTypeOption type="business" label="Business / Shared" icon={<UserGroupIcon className="w-5 h-5"/>} />
+                        <AccountTypeOption type="business" label="Business / Shared" icon={<BuildingOfficeIcon className="w-5 h-5"/>} />
                     </div>
                 </div>
 

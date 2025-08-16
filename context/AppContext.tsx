@@ -1,8 +1,6 @@
-
 import React, { createContext, useState, useContext, ReactNode, useMemo, useCallback, useEffect } from 'react';
 import { Email, ActionType, Label, Conversation, User, AppSettings, Signature, AutoResponder, Rule, SystemLabel, Contact, ContactGroup, SystemFolder, UserFolder, Attachment, FolderTreeNode, Identity, Template, DisplayDensity } from '../types';
 import { useToast } from './ToastContext';
-import { mockLabels, mockContacts, mockEmails, mockUser, mockUserFolders, mockContactGroups } from '../data/mockData';
 
 
 interface ComposeState {
@@ -27,6 +25,7 @@ interface ComposeState {
 type Theme = 'light' | 'dark';
 type View = 'mail' | 'settings' | 'contacts';
 type SelectionType = 'folder' | 'label';
+type SidebarSection = 'folders' | 'labels';
 
 interface ShortcutTrigger {
     type: 'openLabelPopover' | 'openMovePopover' | 'openSnoozePopover';
@@ -51,6 +50,7 @@ interface AppContextType {
   theme: Theme;
   displayedConversations: Conversation[];
   isSidebarCollapsed: boolean;
+  sidebarSectionOrder: SidebarSection[];
   view: View;
   appSettings: AppSettings;
   contacts: Contact[];
@@ -63,9 +63,10 @@ interface AppContextType {
   isShortcutsModalOpen: boolean;
   shortcutTrigger: ShortcutTrigger | null;
   isOnline: boolean;
+  isDraggingEmail: boolean;
   
   // Auth
-  login: (email: string, pass: string) => void;
+  login: (email: string, pass: string) => Promise<void>;
   logout: () => void;
   checkUserSession: () => void;
   
@@ -109,6 +110,7 @@ interface AppContextType {
   // UI
   toggleTheme: () => void;
   toggleSidebar: () => void;
+  reorderSidebarSections: (draggedId: SidebarSection, targetId: SidebarSection) => void;
   handleEscape: () => void;
   navigateConversationList: (direction: 'up' | 'down') => void;
   openFocusedConversation: () => void;
@@ -116,6 +118,7 @@ interface AppContextType {
   setIsShortcutsModalOpen: (isOpen: boolean) => void;
   handleKeyboardShortcut: (e: KeyboardEvent) => void;
   clearShortcutTrigger: () => void;
+  setIsDraggingEmail: (isDragging: boolean) => void;
   
   // Settings
   updateSignature: (signature: Signature) => void;
@@ -195,26 +198,14 @@ const initialAppSettings: AppSettings = {
 
 const AppContext = createContext<AppContextType | undefined>(undefined);
 
-export const AppContextProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
+export const AppContextProvider = ({ children }: { children: ReactNode }): React.ReactElement => {
   const [user, setUser] = useState<User | null>(null);
   const [emails, setEmails] = useState<Email[]>([]);
-  const [labels, setLabels] = useState<Label[]>(() => {
-    const saved = localStorage.getItem('labels');
-    return saved ? JSON.parse(saved) : mockLabels;
-  });
-  const [userFolders, setUserFolders] = useState<UserFolder[]>(() => {
-    const saved = localStorage.getItem('userFolders');
-    return saved ? JSON.parse(saved) : mockUserFolders;
-  });
-  const [contacts, setContacts] = useState<Contact[]>(() => {
-    const savedContacts = localStorage.getItem('contacts');
-    return savedContacts ? JSON.parse(savedContacts) : mockContacts;
-  });
-   const [contactGroups, setContactGroups] = useState<ContactGroup[]>(() => {
-    const savedGroups = localStorage.getItem('contactGroups');
-    return savedGroups ? JSON.parse(savedGroups) : mockContactGroups;
-  });
-  const [currentSelection, setCurrentSelection] = useState<{type: SelectionType, id: string}>({type: 'folder', id: SystemFolder.INBOX});
+  const [labels, setLabels] = useState<Label[]>([]);
+  const [userFolders, setUserFolders] = useState<UserFolder[]>([]);
+  const [contacts, setContacts] = useState<Contact[]>([]);
+  const [contactGroups, setContactGroups] = useState<ContactGroup[]>([]);
+  const [currentSelection, _setCurrentSelection] = useState<{type: SelectionType, id: string}>({type: 'folder', id: SystemFolder.INBOX});
   const [selectedConversationId, setSelectedConversationId] = useState<string | null>(null);
   const [selectedContactId, setSelectedContactId] = useState<string | null>(null);
   const [selectedGroupId, setSelectedGroupId] = useState<string | null>(null);
@@ -234,38 +225,18 @@ export const AppContextProvider: React.FC<{ children: ReactNode }> = ({ children
     return 'light';
   });
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState<boolean>(() => localStorage.getItem('isSidebarCollapsed') === 'true');
+  const [sidebarSectionOrder, setSidebarSectionOrder] = useState<SidebarSection[]>(['folders', 'labels']);
   const [view, setView] = useState<View>('mail');
-  const [appSettings, setAppSettings] = useState<AppSettings>(() => {
-      const savedSettings = localStorage.getItem('appSettings');
-      if (savedSettings) {
-        try {
-            const parsedSettings = JSON.parse(savedSettings);
-            return {
-                ...initialAppSettings,
-                ...parsedSettings,
-                signature: { ...initialAppSettings.signature, ...parsedSettings.signature },
-                autoResponder: { ...initialAppSettings.autoResponder, ...parsedSettings.autoResponder },
-                sendDelay: { ...initialAppSettings.sendDelay, ...parsedSettings.sendDelay },
-                notifications: { ...initialAppSettings.notifications, ...parsedSettings.notifications },
-                conversationView: parsedSettings.conversationView !== undefined ? parsedSettings.conversationView : initialAppSettings.conversationView,
-                blockExternalImages: parsedSettings.blockExternalImages !== undefined ? parsedSettings.blockExternalImages : initialAppSettings.blockExternalImages,
-                templates: parsedSettings.templates || [],
-                displayDensity: parsedSettings.displayDensity || initialAppSettings.displayDensity,
-            };
-        } catch (e) {
-            console.error("Failed to parse appSettings from localStorage", e);
-        }
-      }
-      return initialAppSettings;
-  });
+  const [appSettings, setAppSettings] = useState<AppSettings>(initialAppSettings);
   const [isLoading, setIsLoading] = useState(true);
-  const [isSetupComplete, setIsSetupComplete] = useState<boolean>(() => localStorage.getItem('isSetupComplete') === 'true');
+  const [isSetupComplete, setIsSetupComplete] = useState<boolean>(false);
   const [pendingSend, setPendingSend] = useState<PendingSend | null>(null);
   const [notificationPermission, setNotificationPermission] = useState<NotificationPermission>('default');
   const [isShortcutsModalOpen, setIsShortcutsModalOpen] = useState(false);
   const [keySequence, setKeySequence] = useState<string[]>([]);
   const [shortcutTrigger, setShortcutTrigger] = useState<ShortcutTrigger | null>(null);
   const [isOnline, setIsOnline] = useState(navigator.onLine);
+  const [isDraggingEmail, setIsDraggingEmail] = useState(false);
 
   useEffect(() => {
     const handleOnline = () => setIsOnline(true);
@@ -278,61 +249,127 @@ export const AppContextProvider: React.FC<{ children: ReactNode }> = ({ children
     };
   }, []);
   useEffect(() => { if ('Notification' in window) setNotificationPermission(Notification.permission); }, []);
-  useEffect(() => { localStorage.setItem('appSettings', JSON.stringify(appSettings)); }, [appSettings]);
-  useEffect(() => { localStorage.setItem('emails', JSON.stringify(emails)); }, [emails]);
-  useEffect(() => { localStorage.setItem('contacts', JSON.stringify(contacts)); }, [contacts]);
-  useEffect(() => { localStorage.setItem('contactGroups', JSON.stringify(contactGroups)); }, [contactGroups]);
-  useEffect(() => { localStorage.setItem('labels', JSON.stringify(labels)); }, [labels]);
-  useEffect(() => { localStorage.setItem('userFolders', JSON.stringify(userFolders)); }, [userFolders]);
+  
+  const saveToLocalStorage = useCallback((key: string, data: any) => {
+    try {
+        if(user) {
+            localStorage.setItem(`${user.email}-${key}`, JSON.stringify(data));
+        }
+    } catch (e) {
+        console.error(`Failed to save ${key} to localStorage`, e);
+    }
+  }, [user]);
+  
+  useEffect(() => { saveToLocalStorage('appSettings', appSettings); }, [appSettings, saveToLocalStorage]);
+  useEffect(() => { saveToLocalStorage('emails', emails); }, [emails, saveToLocalStorage]);
+  useEffect(() => { saveToLocalStorage('contacts', contacts); }, [contacts, saveToLocalStorage]);
+  useEffect(() => { saveToLocalStorage('contactGroups', contactGroups); }, [contactGroups, saveToLocalStorage]);
+  useEffect(() => { saveToLocalStorage('labels', labels); }, [labels, saveToLocalStorage]);
+  useEffect(() => { saveToLocalStorage('userFolders', userFolders); }, [userFolders, saveToLocalStorage]);
+  useEffect(() => { saveToLocalStorage('sidebarSectionOrder', sidebarSectionOrder); }, [sidebarSectionOrder, saveToLocalStorage]);
+
 
   const checkUserSession = useCallback(() => {
     setIsLoading(true);
-    const loadedSettingsStr = localStorage.getItem('appSettings');
-    const loadedSettings: AppSettings = loadedSettingsStr ? JSON.parse(loadedSettingsStr) : initialAppSettings;
-    const hasCompletedSetup = localStorage.getItem('isSetupComplete') === 'true';
+    const sessionUserStr = localStorage.getItem('sessionUser');
+    if (sessionUserStr) {
+      const sessionUser = JSON.parse(sessionUserStr);
+      setUser(sessionUser);
 
-    const currentUser = { ...mockUser };
-    const primaryIdentity = loadedSettings.identities.find(id => id.email === currentUser.email);
-    if(primaryIdentity) {
-      currentUser.name = primaryIdentity.name;
-    }
-    
-    setUser(currentUser);
-    
-    const savedEmails = localStorage.getItem('emails');
-    if (savedEmails) {
-        setEmails(JSON.parse(savedEmails));
+      const loadFromStorage = (key: string, setter: React.Dispatch<any>, defaultValue: any) => {
+          const savedData = localStorage.getItem(`${sessionUser.email}-${key}`);
+          setter(savedData ? JSON.parse(savedData) : defaultValue);
+      };
+      
+      const savedSettings = localStorage.getItem(`${sessionUser.email}-appSettings`);
+      const parsedSettings = savedSettings ? JSON.parse(savedSettings) : initialAppSettings;
+      const mergedSettings = {
+        ...initialAppSettings, ...parsedSettings,
+        signature: { ...initialAppSettings.signature, ...parsedSettings.signature },
+        autoResponder: { ...initialAppSettings.autoResponder, ...parsedSettings.autoResponder },
+        sendDelay: { ...initialAppSettings.sendDelay, ...parsedSettings.sendDelay },
+        notifications: { ...initialAppSettings.notifications, ...parsedSettings.notifications },
+      };
+
+      setAppSettings(mergedSettings);
+      loadFromStorage('emails', setEmails, []);
+      loadFromStorage('labels', setLabels, []);
+      loadFromStorage('userFolders', setUserFolders, []);
+      loadFromStorage('contacts', setContacts, []);
+      loadFromStorage('contactGroups', setContactGroups, []);
+      loadFromStorage('sidebarSectionOrder', setSidebarSectionOrder, ['folders', 'labels']);
+      setIsSetupComplete(localStorage.getItem(`${sessionUser.email}-isSetupComplete`) === 'true');
+      
     } else {
-        setEmails(mockEmails);
+        setUser(null);
     }
-    
-    setAppSettings(loadedSettings);
-    setIsSetupComplete(hasCompletedSetup && !!primaryIdentity);
-
     setTimeout(() => setIsLoading(false), 500);
   }, []);
-  
-  const login = useCallback((email: string, pass: string) => {
+
+  const login = useCallback(async (email: string, pass: string) => {
     setIsLoading(true);
-    if (email && pass) {
-        checkUserSession();
-    } else {
-        addToast('Please enter both email and password.');
+    try {
+        const response = await fetch('/api/login', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ email, password: pass }),
+        });
+
+        const data = await response.json();
+
+        if (response.ok && data.success) {
+            // This is a new user session. Clear out any old data for this email.
+            Object.keys(localStorage).forEach(key => {
+                if (key.startsWith(`${email}-`)) {
+                    localStorage.removeItem(key);
+                }
+            });
+
+            const newUser = { id: `user-${Date.now()}`, email, name: email.split('@')[0] };
+            setUser(newUser);
+            localStorage.setItem('sessionUser', JSON.stringify(newUser));
+            
+            // Reset state for the new user
+            setEmails([]);
+            setLabels([]);
+            setUserFolders([]);
+            setContacts([]);
+            setContactGroups([]);
+            setAppSettings(initialAppSettings);
+            setSidebarSectionOrder(['folders', 'labels']);
+            setIsSetupComplete(false); // New user needs to go through setup
+        } else {
+            addToast(data.message || "Invalid credentials.", { duration: 5000 });
+            setUser(null);
+        }
+    } catch (error) {
+        console.error('Login request failed:', error);
+        addToast("Failed to connect to the server. Please try again later.", { duration: 5000 });
+        setUser(null);
+    } finally {
         setIsLoading(false);
     }
-  }, [checkUserSession, addToast]);
+  }, [addToast]);
 
   const logout = useCallback(() => {
     setUser(null);
+    localStorage.removeItem('sessionUser');
     setEmails([]);
-    // Don't clear labels/folders on logout to persist user settings
-    setCurrentSelection({type: 'folder', id: SystemFolder.INBOX});
+    _setCurrentSelection({type: 'folder', id: SystemFolder.INBOX});
     setSelectedConversationId(null);
-    addToast('You have been logged out.');
+    addToast("You have been logged out.");
   }, [addToast]);
 
   const deselectAllConversations = useCallback(() => setSelectedConversationIds(new Set()), []);
   
+  const setCurrentSelection = useCallback((type: SelectionType, id: string) => {
+    _setCurrentSelection({ type, id });
+    setSelectedConversationId(null);
+    deselectAllConversations();
+  }, [deselectAllConversations]);
+
   const unsnoozeConversation = useCallback((conversationIds: string[]) => {
     setEmails(prevEmails => {
         return prevEmails.map(email => {
@@ -387,937 +424,684 @@ export const AppContextProvider: React.FC<{ children: ReactNode }> = ({ children
 
     return Object.entries(grouped)
       .map(([id, convEmails]) => {
-        convEmails.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
-        const lastEmail = convEmails[convEmails.length - 1];
-        const participants = [...new Map(convEmails.map(e => [e.senderEmail, { name: e.senderEmail === user?.email ? 'Me' : e.senderName, email: e.senderEmail }])).values()];
+        convEmails.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+        const lastEmail = convEmails[0];
+        const participants = [...new Map(convEmails.map(e => [e.senderEmail, { name: e.senderEmail === user?.email ? "Me" : e.senderName, email: e.senderEmail }])).values()];
         const allLabelIds = [...new Set(convEmails.flatMap(e => e.labelIds))];
         const canUnsubscribe = convEmails.some(e => /unsubscribe|opt-out|opt out|subscription preferences/i.test(e.body));
         const isSnoozed = !!lastEmail.snoozedUntil && new Date(lastEmail.snoozedUntil) > new Date();
 
         return {
           id,
-          subject: lastEmail.subject || '(no subject)',
+          subject: lastEmail.subject || "(no subject)",
           emails: convEmails,
           participants,
           lastTimestamp: lastEmail.timestamp,
           isRead: convEmails.every(e => e.isRead),
-          folderId: lastEmail.folderId,
+          folderId: lastEmail.folderId, // Folder is determined by the last email in the thread
           labelIds: allLabelIds,
-          isSnoozed: isSnoozed,
+          isSnoozed,
           snoozedUntil: lastEmail.snoozedUntil,
           hasAttachments: convEmails.some(e => e.attachments && e.attachments.length > 0),
-          canUnsubscribe
+          canUnsubscribe,
+          __originalConversationId: lastEmail.conversationId,
         };
       })
       .sort((a, b) => new Date(b.lastTimestamp).getTime() - new Date(a.lastTimestamp).getTime());
   }, [emails, user]);
 
-  const sortedLabels = useMemo(() => [...labels].sort((a, b) => a.order - b.order), [labels]);
-
-  const folderTree = useMemo<FolderTreeNode[]>(() => {
-    const buildTree = (folders: UserFolder[], parentId?: string, level = 0): FolderTreeNode[] => {
-        return folders
-            .filter(folder => folder.parentId === parentId)
-            .sort((a,b) => a.order - b.order)
-            .map(folder => ({
-                ...folder,
-                level,
-                children: buildTree(folders, folder.id, level + 1)
-            }));
-    };
-    return buildTree(userFolders);
-  }, [userFolders]);
-
-  const flattenedFolderTree = useMemo<FolderTreeNode[]>(() => {
-    const flatten = (nodes: FolderTreeNode[]): FolderTreeNode[] => {
-        return nodes.reduce((acc, node) => {
-            acc.push(node);
-            if (node.children.length > 0) {
-                acc.push(...flatten(node.children));
-            }
-            return acc;
-        }, [] as FolderTreeNode[]);
-    };
-    return flatten(folderTree);
-  }, [folderTree]);
-
   const displayedConversations = useMemo(() => {
-    let baseList: Conversation[];
+    const applyRules = (email: Email): Email => {
+        let modifiedEmail = { ...email };
+        for (const rule of appSettings.rules) {
+            const { field, value } = rule.condition;
+            const targetField = field === 'sender' ? modifiedEmail.senderEmail : field === 'recipient' ? modifiedEmail.recipientEmail : modifiedEmail.subject;
+            
+            if (targetField.toLowerCase().includes(value.toLowerCase())) {
+                switch (rule.action.type) {
+                    case 'moveToFolder':
+                        if (rule.action.folderId) modifiedEmail.folderId = rule.action.folderId;
+                        break;
+                    case 'applyLabel':
+                        if (rule.action.labelId && !modifiedEmail.labelIds.includes(rule.action.labelId)) {
+                           modifiedEmail.labelIds = [...modifiedEmail.labelIds, rule.action.labelId];
+                        }
+                        break;
+                    case 'star':
+                        if (!modifiedEmail.labelIds.includes(SystemLabel.STARRED)) {
+                           modifiedEmail.labelIds = [...modifiedEmail.labelIds, SystemLabel.STARRED];
+                        }
+                        break;
+                    case 'markAsRead':
+                        modifiedEmail.isRead = true;
+                        break;
+                }
+            }
+        }
+        return modifiedEmail;
+    };
 
-    if (appSettings.conversationView) {
-        baseList = allConversations;
-    } else {
-        // Flattened message view
-        baseList = allConversations
-            .flatMap(conv => conv.emails.map(email => ({
-                id: email.id,
-                __originalConversationId: conv.id,
-                subject: email.subject || '(no subject)',
-                emails: [email],
-                participants: [{ name: email.senderName, email: email.senderEmail }],
-                lastTimestamp: email.timestamp,
-                isRead: email.isRead,
-                folderId: email.folderId,
-                labelIds: email.labelIds,
-                isSnoozed: !!email.snoozedUntil && new Date(email.snoozedUntil) > new Date(),
-                snoozedUntil: email.snoozedUntil,
-                hasAttachments: !!(email.attachments && email.attachments.length > 0),
-                canUnsubscribe: /unsubscribe|opt-out|opt out|subscription preferences/i.test(email.body),
-            })))
-            .sort((a, b) => new Date(b.lastTimestamp).getTime() - new Date(a.lastTimestamp).getTime());
-    }
+    const processEmailsWithRules = (emailsToProcess: Email[]): Email[] => {
+       return emailsToProcess.map(applyRules);
+    };
+
+    const runAutoResponder = (newEmail: Email) => {
+        const { isEnabled, subject, message, startDate, endDate } = appSettings.autoResponder;
+        if (!isEnabled || newEmail.senderEmail === user?.email) return;
+
+        const now = new Date();
+        const isWithinDateRange = (!startDate || now >= new Date(startDate)) && (!endDate || now <= new Date(endDate));
+        if (!isWithinDateRange) return;
+        
+        // Check if we already replied to this conversation recently
+        const recentReplies = emails.filter(e => e.folderId === SystemFolder.SENT && e.recipientEmail === newEmail.senderEmail && e.subject.includes(subject));
+        const hoursSinceLastReply = recentReplies.length > 0 ? (now.getTime() - new Date(recentReplies[0].timestamp).getTime()) / (1000 * 60 * 60) : Infinity;
+
+        if (hoursSinceLastReply > 24) { // Only reply once every 24 hours
+            const reply: Email = {
+                id: `email-${Date.now()}`,
+                conversationId: newEmail.conversationId,
+                senderName: user?.name || '',
+                senderEmail: user?.email || '',
+                recipientEmail: newEmail.senderEmail,
+                subject: subject,
+                body: message,
+                snippet: message.substring(0, 100),
+                timestamp: now.toISOString(),
+                isRead: true,
+                folderId: SystemFolder.SENT,
+                labelIds: [],
+            };
+            setEmails(prev => [...prev, reply]);
+        }
+    };
     
-    if (currentSelection.type === 'folder') {
-        baseList = baseList.filter(c => c.folderId === currentSelection.id && !c.isSnoozed);
+    let filtered = allConversations;
+    if (searchQuery) {
+        const searchLower = searchQuery.toLowerCase();
+        
+        const filters = searchLower.match(/(?:[^\s"]+|"[^"]*")+/g) || [];
+        filters.forEach((filter: string) => {
+            if (filter.startsWith('from:')) {
+                const term = filter.substring(5).replace(/"/g, '');
+                filtered = filtered.filter(c => c.participants.some(p => p.email.toLowerCase().includes(term) || p.name.toLowerCase().includes(term)));
+            } else if (filter.startsWith('to:')) {
+                const term = filter.substring(3).replace(/"/g, '');
+                filtered = filtered.filter(c => c.emails.some(e => e.recipientEmail.toLowerCase().includes(term)));
+            } else if (filter === 'is:starred') {
+                filtered = filtered.filter(c => c.labelIds.includes(SystemLabel.STARRED));
+            } else if (filter === 'is:unread') {
+                filtered = filtered.filter(c => !c.isRead);
+            } else if (filter === 'has:attachment') {
+                filtered = filtered.filter(c => c.hasAttachments);
+            } else {
+                 const term = filter.replace(/"/g, '');
+                 filtered = filtered.filter(c => 
+                    c.subject.toLowerCase().includes(term) ||
+                    c.emails.some(e => e.body.toLowerCase().includes(term) || e.snippet.toLowerCase().includes(term))
+                 );
+            }
+        });
+
+    } else if (currentSelection.type === 'folder') {
+      filtered = allConversations.filter(c => c.folderId === currentSelection.id);
     } else if (currentSelection.type === 'label') {
-        if (currentSelection.id === SystemLabel.SNOOZED) {
-            baseList = baseList.filter(c => c.isSnoozed);
+        if(currentSelection.id === SystemLabel.SNOOZED) {
+            filtered = allConversations.filter(c => c.isSnoozed);
         } else {
-             baseList = baseList.filter(c => c.labelIds.includes(currentSelection.id) && c.folderId !== SystemFolder.SPAM && c.folderId !== SystemFolder.TRASH && !c.isSnoozed);
+             filtered = allConversations.filter(c => c.labelIds.includes(currentSelection.id));
         }
     }
-    
-    let filtered = baseList;
-    
-    if(searchQuery) {
-        const lowerQuery = searchQuery.toLowerCase();
-        
-        const filters: { type: string, value: string }[] = [];
-        const filterRegex = /(from:|to:|subject:|is:|has:)([\w@.-]+)/g;
-        
-        const textSearch = lowerQuery.replace(filterRegex, '').trim();
-        
-        let match;
-        while ((match = filterRegex.exec(lowerQuery)) !== null) {
-            filters.push({ type: match[1].slice(0, -1), value: match[2] });
-        }
-        
-        if (filters.length > 0) {
-            filtered = filtered.filter(conv => {
-                return filters.every(({ type, value }) => {
-                    switch (type) {
-                        case 'from':
-                            return conv.participants.some(p => p.name.toLowerCase().includes(value) || p.email.toLowerCase().includes(value));
-                        case 'to':
-                            return conv.emails.some(email =>
-                                (email.recipientEmail && email.recipientEmail.toLowerCase().includes(value)) ||
-                                (email.cc && email.cc.toLowerCase().includes(value)) ||
-                                (email.bcc && email.bcc.toLowerCase().includes(value))
-                            );
-                        case 'subject':
-                            return conv.subject.toLowerCase().includes(value);
-                        case 'is':
-                            if (value === 'starred') return conv.labelIds.includes(SystemLabel.STARRED);
-                            if (value === 'unread') return !conv.isRead;
-                            if (value === 'snoozed') return conv.isSnoozed;
-                            return true;
-                        case 'has':
-                            return value === 'attachment' ? conv.hasAttachments : true;
-                        default:
-                            return true;
-                    }
-                });
-            });
-        }
-
-        if (textSearch) {
-            filtered = filtered.filter(conv => 
-                conv.subject.toLowerCase().includes(textSearch) ||
-                conv.participants.some(p => p.name.toLowerCase().includes(textSearch) || p.email.toLowerCase().includes(textSearch)) ||
-                conv.emails.some(e => e.snippet.toLowerCase().includes(textSearch))
-            );
-        }
-    }
-    
     return filtered;
-
-  }, [allConversations, currentSelection, searchQuery, appSettings.conversationView]);
+  }, [allConversations, currentSelection, searchQuery, appSettings.rules, user, emails]);
   
-  const getRealConversationIds = useCallback((ids: string[]): string[] => {
-    if (appSettings.conversationView) {
-        return ids;
-    }
-    const realIds = new Set<string>();
-    const convMap = new Map<string, Conversation>();
-    displayedConversations.forEach(c => convMap.set(c.id, c));
-    const allConvIds = new Set(allConversations.map(c => c.id));
+  const folderTree = useMemo<FolderTreeNode[]>(() => {
+    const nodes: Record<string, FolderTreeNode> = {};
+    const tree: FolderTreeNode[] = [];
 
-    ids.forEach(id => {
-        if (allConvIds.has(id)) { // It's already a real conv id
-            realIds.add(id);
-            return;
-        }
+    // Initialize all nodes
+    userFolders.forEach(folder => {
+        nodes[folder.id] = { ...folder, children: [], level: 0 };
+    });
 
-        const conv = convMap.get(id); // It's an email ID from displayed list
-        if (conv && conv.__originalConversationId) {
-            realIds.add(conv.__originalConversationId);
-        } else { // Fallback for safety, should not be hit often from UI
-            const originalConv = allConversations.find(c => c.emails.some(e => e.id === id));
-            if (originalConv) {
-                realIds.add(originalConv.id);
-            }
+    // Build the tree
+    userFolders.forEach(folder => {
+        if (folder.parentId && nodes[folder.parentId]) {
+            nodes[folder.parentId].children.push(nodes[folder.id]);
+        } else {
+            tree.push(nodes[folder.id]);
         }
     });
-    return Array.from(realIds);
-  }, [appSettings.conversationView, displayedConversations, allConversations]);
-  
-  const setCurrentSelectionCallback = useCallback((type: SelectionType, id: string) => {
-    setView('mail');
-    setCurrentSelection({type, id});
-    setSelectedConversationId(null);
-    setFocusedConversationId(null);
-    setSearchQuery('');
-    setSelectedConversationIds(new Set());
-  }, []);
-
-  const openCompose = useCallback((config: Partial<Omit<ComposeState, 'isOpen'>> = {}) => {
-    const draftId = (config.action === ActionType.DRAFT && config.email) ? config.email.id : undefined;
-    const conversationId = config.email?.conversationId;
-    setComposeState({ isOpen: true, isMinimized: false, draftId, conversationId, ...config });
-  }, []);
-
-  const closeCompose = useCallback(() => setComposeState({ isOpen: false, isMinimized: false }), []);
-  const toggleMinimizeCompose = useCallback(() => setComposeState(prev => ({ ...prev, isMinimized: !prev.isMinimized })), []);
-  
-  const moveConversations = useCallback((conversationIds: string[], targetFolderId: string) => {
-     const realIds = getRealConversationIds(conversationIds);
-     setEmails(prevEmails => {
-        return prevEmails.map(email => {
-            if (realIds.includes(email.conversationId)) {
-                return { ...email, folderId: targetFolderId };
-            }
-            return email;
-        });
-    });
-    const folderName = userFolders.find(f => f.id === targetFolderId)?.name || targetFolderId;
-    addToast(`${realIds.length} conversation(s) moved to "${folderName}".`);
-    deselectAllConversations();
-    if (realIds.includes(selectedConversationId!)) setSelectedConversationId(null);
-  }, [addToast, userFolders, deselectAllConversations, selectedConversationId, getRealConversationIds]);
-
-  const applyLabel = useCallback((conversationIds: string[], labelId: string) => {
-    const realIds = getRealConversationIds(conversationIds);
-    setEmails(prevEmails => {
-        return prevEmails.map(email => {
-            if (realIds.includes(email.conversationId)) {
-                const newLabelIds = [...new Set([...email.labelIds, labelId])];
-                return { ...email, labelIds: newLabelIds };
-            }
-            return email;
-        });
-    });
-    const labelName = labels.find(l => l.id === labelId)?.name || labelId;
-    addToast(`Applied label "${labelName}" to ${realIds.length} conversation(s).`);
-  }, [addToast, labels, getRealConversationIds]);
-
-  const removeLabel = useCallback((conversationIds: string[], labelId: string) => {
-    const realIds = getRealConversationIds(conversationIds);
-    setEmails(prevEmails => {
-        return prevEmails.map(email => {
-            if (realIds.includes(email.conversationId)) {
-                return { ...email, labelIds: email.labelIds.filter(id => id !== labelId) };
-            }
-            return email;
-        });
-    });
-  }, [getRealConversationIds]);
-
-  const toggleLabel = useCallback((conversationIds: string[], labelId: string) => {
-    const realIds = getRealConversationIds(conversationIds);
-    if (realIds.length === 0) return;
-
-    const firstConv = allConversations.find(c => c.id === realIds[0]);
-    if (!firstConv) return;
     
-    // Check if ALL conversations in the selection have the label.
-    // To be safe, we'll just check the first one, which is common UI practice.
-    const hasLabel = firstConv.labelIds.includes(labelId);
-
-    if (hasLabel) {
-        removeLabel(conversationIds, labelId); // Pass original IDs
-        addToast('Label removed.');
-    } else {
-        applyLabel(conversationIds, labelId); // Pass original IDs
+    const sortChildren = (node: FolderTreeNode) => {
+        node.children.sort((a,b) => a.order - b.order);
+        node.children.forEach(sortChildren);
     }
-  }, [allConversations, getRealConversationIds, applyLabel, removeLabel, addToast]);
+    
+    tree.sort((a,b) => a.order - b.order);
+    tree.forEach(sortChildren);
+
+    // Set levels recursively
+    const setLevels = (nodesToProcess: FolderTreeNode[], level: number) => {
+        nodesToProcess.forEach(node => {
+            node.level = level;
+            setLevels(node.children, level + 1);
+        });
+    };
+    setLevels(tree, 0);
+
+    return tree;
+}, [userFolders]);
+
+const flattenedFolderTree = useMemo<FolderTreeNode[]>(() => {
+    const result: FolderTreeNode[] = [];
+    const traverse = (nodes: FolderTreeNode[]) => {
+        nodes.forEach(node => {
+            result.push(node);
+            traverse(node.children);
+        });
+    };
+    traverse(folderTree);
+    return result;
+}, [folderTree]);
   
-  const archiveConversation = useCallback((conversationIds: string[]) => {
-    const realIds = getRealConversationIds(conversationIds);
-    moveConversations(realIds, SystemFolder.ARCHIVE);
-  }, [moveConversations, getRealConversationIds]);
+  // --- Mail Actions ---
+  const openCompose = useCallback((config: Partial<Omit<ComposeState, 'isOpen'>> = {}) => { setComposeState({ isOpen: true, ...config }); }, []);
+  const closeCompose = useCallback(() => { setComposeState({ isOpen: false }); }, []);
+  const toggleMinimizeCompose = useCallback(() => { setComposeState(prev => ({...prev, isMinimized: !prev.isMinimized}))}, []);
 
-  const actuallySendEmail = useCallback((data: SendEmailData, draftId?: string, conversationId?: string) => {
-      if (!user) return;
-      
-      const newEmail: Email = {
-        id: `email-${Date.now()}`,
-        conversationId: conversationId || `conv-${Date.now()}`,
-        senderName: user.name,
-        senderEmail: user.email,
-        recipientEmail: data.to,
-        cc: data.cc,
-        // bcc data is a delivery instruction and should not be stored in the final message.
-        subject: data.subject || '(no subject)',
-        body: data.body,
-        snippet: data.body.replace(/<[^>]*>?/gm, '').substring(0, 100),
-        timestamp: new Date().toISOString(),
-        isRead: true,
-        folderId: data.scheduleDate ? SystemFolder.SCHEDULED : SystemFolder.SENT,
-        labelIds: [],
-        attachments: data.attachments.map(f => ({fileName: f.name, fileSize: f.size, mimeType: f.type})),
-        scheduledSendTime: data.scheduleDate?.toISOString(),
-      };
-
-      setEmails(prev => [newEmail, ...prev.filter(e => e.id !== draftId)]);
-      
-      if (data.scheduleDate) {
-          addToast('Message scheduled.');
-      } else {
-          addToast('Message sent.');
-      }
-      const targetFolder = data.scheduleDate ? SystemFolder.SCHEDULED : SystemFolder.SENT;
-      if (currentSelection.id !== targetFolder) {
-          setCurrentSelectionCallback('folder', targetFolder);
-      }
-  }, [user, addToast, setCurrentSelectionCallback, currentSelection]);
+  const sendEmail = useCallback((data: SendEmailData, draftId?: string) => {
+    if (appSettings.sendDelay.isEnabled && !data.scheduleDate) {
+        addToast("Sending...", { 
+            duration: appSettings.sendDelay.duration * 1000, 
+            action: { label: "Undo", onClick: cancelSend }
+        });
+        const timerId = window.setTimeout(() => {
+            actuallySendEmail(data, draftId);
+            setPendingSend(null);
+        }, appSettings.sendDelay.duration * 1000);
+        setPendingSend({ timerId, emailData: data, draftId });
+    } else {
+        actuallySendEmail(data, draftId);
+    }
+    closeCompose();
+  }, [appSettings.sendDelay, closeCompose, addToast]);
 
   const cancelSend = useCallback(() => {
     if (pendingSend) {
         clearTimeout(pendingSend.timerId);
-        openCompose({ 
-            initialData: pendingSend.emailData, 
-            draftId: pendingSend.draftId,
-            conversationId: pendingSend.conversationId,
-        });
         setPendingSend(null);
-        addToast('Sending cancelled.');
+        addToast("Sending cancelled.");
     }
-  }, [pendingSend, openCompose, addToast]);
-
-  const sendEmail = useCallback((data: SendEmailData, draftId?: string) => {
-    const convId = composeState.conversationId;
-    closeCompose();
-
-    if (data.scheduleDate) {
-      actuallySendEmail(data, draftId, convId);
-      return;
-    }
-    
-    if (appSettings.sendDelay.isEnabled && appSettings.sendDelay.duration > 0) {
-      if (pendingSend?.timerId) clearTimeout(pendingSend.timerId);
-      
-      const timerId = setTimeout(() => {
-        actuallySendEmail(data, draftId, convId);
-        setPendingSend(null);
-      }, appSettings.sendDelay.duration * 1000);
-      
-      setPendingSend({ timerId: timerId as unknown as number, emailData: data, draftId, conversationId: convId });
-      
-      addToast('Sending...', {
-        duration: appSettings.sendDelay.duration * 1000,
-        action: { label: 'Undo', onClick: cancelSend }
-      });
-    } else {
-      actuallySendEmail(data, draftId, convId);
-    }
-  }, [closeCompose, actuallySendEmail, appSettings.sendDelay, pendingSend, addToast, cancelSend, composeState.conversationId]);
+  }, [pendingSend, addToast]);
   
-  const saveDraft = useCallback((data: SendEmailData, draftId?: string) => {
-      if (!user) return '';
-      const conversationId = composeState.conversationId || `conv-${Date.now()}`;
-      let newDraftId = draftId;
+  const actuallySendEmail = useCallback((data: SendEmailData, draftId?: string) => {
+    const { to, cc, bcc, subject, body, attachments, scheduleDate } = data;
+    const conversation = allConversations.find(c => c.id === composeState.conversationId);
+    
+    const newEmail: Email = {
+        id: `email-${Date.now()}`,
+        conversationId: conversation?.id || `conv-${Date.now()}`,
+        senderName: user?.name || '',
+        senderEmail: user?.email || '',
+        recipientEmail: to,
+        cc, bcc,
+        subject: subject || (conversation?.subject || "(no subject)"),
+        body,
+        snippet: body.replace(/<[^>]*>?/gm, '').substring(0, 100),
+        timestamp: new Date().toISOString(),
+        isRead: true,
+        folderId: scheduleDate ? SystemFolder.SCHEDULED : SystemFolder.SENT,
+        labelIds: [],
+        attachments: attachments.map(f => ({fileName: f.name, fileSize: f.size, mimeType: f.type})),
+        scheduledSendTime: scheduleDate?.toISOString(),
+    };
+    
+    setEmails(prev => {
+        const existing = draftId ? prev.filter(e => e.id !== draftId) : prev;
+        return [...existing, newEmail];
+    });
+    addToast(scheduleDate ? "Message scheduled." : "Message sent.");
 
-      if (draftId) {
-          setEmails(prev => prev.map(e => e.id === draftId ? {
-              ...e,
-              recipientEmail: data.to,
-              cc: data.cc || undefined,
-              bcc: data.bcc || undefined,
-              subject: data.subject || '(no subject)',
-              body: data.body,
-              snippet: data.body.replace(/<[^>]*>?/gm, '').substring(0, 100),
-              timestamp: new Date().toISOString(),
-              attachments: data.attachments.map(f => ({ fileName: f.name, fileSize: f.size, mimeType: f.type })),
-          } : e));
-          addToast('Draft updated.');
-      } else {
-          newDraftId = `email-${Date.now()}`;
-          const newDraft: Email = {
-              id: newDraftId,
-              conversationId: conversationId,
-              senderName: user.name,
-              senderEmail: user.email,
-              recipientEmail: data.to,
-              cc: data.cc,
-              bcc: data.bcc,
-              subject: data.subject || '(no subject)',
-              body: data.body,
-              snippet: data.body.replace(/<[^>]*>?/gm, '').substring(0, 100),
-              timestamp: new Date().toISOString(),
-              isRead: true,
-              folderId: SystemFolder.DRAFTS,
-              labelIds: [],
-              attachments: data.attachments.map(f => ({ fileName: f.name, fileSize: f.size, mimeType: f.type })),
-          };
-          setEmails(prev => [newDraft, ...prev]);
-          addToast('Draft saved.');
-      }
-      if (currentSelection.id !== SystemFolder.DRAFTS) {
-        setCurrentSelectionCallback('folder', SystemFolder.DRAFTS);
-      }
-      return newDraftId || '';
-  }, [user, addToast, composeState.conversationId, currentSelection, setCurrentSelectionCallback]);
+  }, [user, allConversations, composeState.conversationId, closeCompose, addToast]);
+  
+  const saveDraft = useCallback((data: SendEmailData, draftId?: string): string => {
+      const { to, cc, bcc, subject, body } = data;
+      
+      const draft: Email = {
+        id: draftId || `email-${Date.now()}`,
+        conversationId: composeState.conversationId || `conv-${Date.now()}`,
+        senderName: user?.name || '',
+        senderEmail: user?.email || '',
+        recipientEmail: to,
+        cc, bcc,
+        subject, body,
+        snippet: body.replace(/<[^>]*>?/gm, '').substring(0, 100),
+        timestamp: new Date().toISOString(),
+        isRead: true,
+        folderId: SystemFolder.DRAFTS,
+        labelIds: [],
+      };
+      
+      setEmails(prev => {
+          const withoutOld = draftId ? prev.filter(e => e.id !== draftId) : prev;
+          return [...withoutOld, draft];
+      });
+      addToast(draftId ? "Draft updated." : "Draft saved.");
+      return draft.id;
+  }, [user, composeState.conversationId, addToast]);
 
   const deleteDraft = useCallback((draftId: string) => {
-    setEmails(prev => prev.filter(email => email.id !== draftId));
-    addToast('Draft discarded.');
+      setEmails(prev => prev.filter(e => e.id !== draftId));
+      addToast("Draft discarded.");
+  }, [addToast]);
+  
+  const moveConversations = useCallback((conversationIds: string[], targetFolderId: string) => {
+    setEmails(prevEmails => 
+        prevEmails.map(email => 
+            conversationIds.includes(email.conversationId) 
+            ? { ...email, folderId: targetFolderId, labelIds: email.labelIds.filter(l => l !== SystemLabel.SNOOZED), snoozedUntil: undefined } 
+            : email
+        )
+    );
+    const folderName = userFolders.find(f => f.id === targetFolderId)?.name || targetFolderId;
+    addToast(`${conversationIds.length} conversation(s) moved to "${folderName}".`);
+    deselectAllConversations();
+    if (conversationIds.includes(selectedConversationId || '')) setSelectedConversationId(null);
+  }, [userFolders, addToast, deselectAllConversations, selectedConversationId]);
+
+  const toggleLabel = useCallback((conversationIds: string[], labelId: string) => {
+    const isAdding = !allConversations.find(c => c.id === conversationIds[0])?.labelIds.includes(labelId);
+    if(isAdding) applyLabel(conversationIds, labelId);
+    else removeLabel(conversationIds, labelId);
+  }, [allConversations]);
+
+  const applyLabel = useCallback((conversationIds: string[], labelId: string) => {
+    setEmails(prevEmails =>
+      prevEmails.map(email =>
+        conversationIds.includes(email.conversationId) && !email.labelIds.includes(labelId)
+          ? { ...email, labelIds: [...email.labelIds, labelId] }
+          : email
+      )
+    );
+    addToast(`Applied label "${labels.find(l=>l.id===labelId)?.name || ''}" to ${conversationIds.length} conversation(s).`);
+  }, [labels, addToast]);
+
+  const removeLabel = useCallback((conversationIds: string[], labelId: string) => {
+    setEmails(prevEmails =>
+      prevEmails.map(email =>
+        conversationIds.includes(email.conversationId)
+          ? { ...email, labelIds: email.labelIds.filter(id => id !== labelId) }
+          : email
+      )
+    );
+    addToast("Label removed.");
   }, [addToast]);
 
   const deleteConversation = useCallback((conversationIds: string[]) => {
-    const realIds = getRealConversationIds(conversationIds);
-    const convsToDelete = allConversations.filter(c => realIds.includes(c.id));
-    const isPermanentDelete = convsToDelete.every(c => c.folderId === SystemFolder.TRASH);
-
-    if (isPermanentDelete) {
-        const emailIdsToDelete = convsToDelete.flatMap(c => c.emails.map(e => e.id));
-        setEmails(prev => prev.filter(e => !emailIdsToDelete.includes(e.id)));
-        addToast(`${realIds.length} conversation(s) permanently deleted.`);
+    const isTrash = currentSelection.type === 'folder' && currentSelection.id === SystemFolder.TRASH;
+    if (isTrash) {
+      setEmails(prev => prev.filter(e => !conversationIds.includes(e.conversationId)));
+      addToast(`${conversationIds.length} conversation(s) permanently deleted.`);
     } else {
-        moveConversations(realIds, SystemFolder.TRASH);
-        // Also strip labels when moving to trash
-        setEmails(prevEmails => prevEmails.map(email => 
-            realIds.includes(email.conversationId) ? { ...email, labelIds: [] } : email
-        ));
+      moveConversations(conversationIds, SystemFolder.TRASH);
     }
+  }, [currentSelection, moveConversations, addToast]);
 
-    if(selectedConversationIds.size > 0) deselectAllConversations();
-    if(realIds.includes(selectedConversationId!)) setSelectedConversationId(null);
-  }, [allConversations, moveConversations, addToast, selectedConversationId, selectedConversationIds, deselectAllConversations, getRealConversationIds]);
+  const archiveConversation = useCallback((conversationIds: string[]) => moveConversations(conversationIds, SystemFolder.ARCHIVE), [moveConversations]);
+  const markAsRead = useCallback((conversationId: string) => { setEmails(prev => prev.map(e => e.conversationId === conversationId ? { ...e, isRead: true } : e)); }, []);
+  const markAsUnread = useCallback((conversationIds: string[]) => { setEmails(prev => prev.map(e => conversationIds.includes(e.conversationId) ? { ...e, isRead: false } : e)); addToast(`Marked ${conversationIds.length} item(s) as unread.`); if (conversationIds.includes(selectedConversationId || '')) setSelectedConversationId(null); }, [addToast, selectedConversationId]);
+  const markAsSpam = useCallback((conversationIds: string[]) => moveConversations(conversationIds, SystemFolder.SPAM), [moveConversations]);
+  const markAsNotSpam = useCallback((conversationIds: string[]) => moveConversations(conversationIds, SystemFolder.INBOX), [moveConversations]);
 
-  const handleEscape = useCallback(() => {
-    if (isShortcutsModalOpen) { setIsShortcutsModalOpen(false); return; }
-    if (composeState.isOpen) return;
-    if (selectedConversationId) setSelectedConversationId(null);
-    else if (searchQuery) setSearchQuery('');
-    else if (focusedConversationId) setFocusedConversationId(null);
-  }, [composeState.isOpen, selectedConversationId, searchQuery, focusedConversationId, isShortcutsModalOpen]);
+  // Settings actions
+  const updateSignature = useCallback((signature: Signature) => { setAppSettings(prev => ({...prev, signature})); addToast("Signature settings updated."); }, [addToast]);
+  const updateAutoResponder = useCallback((autoResponder: AutoResponder) => { setAppSettings(prev => ({...prev, autoResponder})); addToast("Auto-responder settings updated."); }, [addToast]);
+  const addRule = useCallback((rule: Omit<Rule, 'id'>) => { setAppSettings(prev => ({...prev, rules: [...prev.rules, {...rule, id: `rule-${Date.now()}`}]})); addToast("Rule added."); }, [addToast]);
+  const deleteRule = useCallback((ruleId: string) => { setAppSettings(prev => ({...prev, rules: prev.rules.filter(r => r.id !== ruleId)})); addToast("Rule deleted."); }, [addToast]);
+  const updateSendDelay = useCallback((sendDelay: AppSettings['sendDelay']) => { setAppSettings(prev => ({...prev, sendDelay})); addToast("Send delay settings updated."); }, [addToast]);
+  const updateConversationView = useCallback((enabled: boolean) => { setAppSettings(prev => ({...prev, conversationView: enabled })); addToast(enabled ? "Conversation view enabled." : "Conversation view disabled."); }, [addToast]);
+  const updateBlockExternalImages = useCallback((enabled: boolean) => { setAppSettings(prev => ({...prev, blockExternalImages: enabled })); addToast(enabled ? "External images will be blocked by default." : "External images will be shown by default."); }, [addToast]);
+  const updateDisplayDensity = useCallback((density: DisplayDensity) => { setAppSettings(prev => ({...prev, displayDensity: density})); addToast(`Display density set to ${density}.`); }, [addToast]);
+  const createTemplate = useCallback((name: string, body: string) => { const newTemplate = { id: `template-${Date.now()}`, name, body }; setAppSettings(prev => ({ ...prev, templates: [...prev.templates, newTemplate] })); addToast(`Template "${name}" created.`); }, [addToast]);
+  const updateTemplate = useCallback((id: string, updates: Partial<Omit<Template, 'id'>>) => { setAppSettings(prev => ({ ...prev, templates: prev.templates.map(t => t.id === id ? {...t, ...updates} : t) })); addToast("Template updated."); }, [addToast]);
+  const deleteTemplate = useCallback((id: string) => { setAppSettings(prev => ({ ...prev, templates: prev.templates.filter(t => t.id !== id) })); addToast("Template deleted."); }, [addToast]);
 
-  const toggleTheme = useCallback(() => {
-    setTheme(prevTheme => {
-      const newTheme = prevTheme === 'light' ? 'dark' : 'light';
-      localStorage.setItem('theme', newTheme);
-      return newTheme;
-    });
-  }, []);
-
-  const toggleSidebar = useCallback(() => { setIsSidebarCollapsed(prev => { const newState = !prev; localStorage.setItem('isSidebarCollapsed', String(newState)); return newState; }); }, []);
-  const toggleConversationSelection = useCallback((conversationId: string) => { setSelectedConversationIds(prev => { const newSet = new Set(prev); if (newSet.has(conversationId)) newSet.delete(conversationId); else newSet.add(conversationId); return newSet; }); }, []);
-  const selectAllConversations = useCallback((conversationIds: string[]) => { setSelectedConversationIds(new Set(conversationIds)); }, []);
-  
-  const markConversationsAsRead = useCallback((conversationIds: string[], isRead: boolean) => {
-    const realIds = getRealConversationIds(conversationIds);
-    setEmails(prevEmails => prevEmails.map(email => {
-        if (realIds.includes(email.conversationId)) {
-            return { ...email, isRead };
-        }
-        return email;
-    }));
-  }, [getRealConversationIds]);
-  
-  const bulkAction = useCallback((action: 'read' | 'unread' | 'delete') => {
-    const ids = Array.from(selectedConversationIds);
-    if (ids.length === 0) return;
-    if (action === 'delete') deleteConversation(ids);
-    else { markConversationsAsRead(ids, action === 'read'); addToast(`Marked ${ids.length} item(s) as ${action}.`); }
-    deselectAllConversations();
-  }, [selectedConversationIds, deleteConversation, deselectAllConversations, markConversationsAsRead, addToast]);
-
-  const bulkDelete = useCallback(() => bulkAction('delete'), [bulkAction]);
-  const bulkMarkAsRead = useCallback(() => bulkAction('read'), [bulkAction]);
-  const bulkMarkAsUnread = useCallback(() => bulkAction('unread'), [bulkAction]);
-  const markAsRead = useCallback((conversationId: string) => { markConversationsAsRead([conversationId], true); }, [markConversationsAsRead]);
-  const markAsUnread = useCallback((conversationIds: string[]) => { markConversationsAsRead(conversationIds, false); }, [markConversationsAsRead]);
-
-  const navigateConversationList = useCallback((direction: 'up' | 'down') => {
-    if (displayedConversations.length === 0) return;
-    const currentId = focusedConversationId || selectedConversationId;
-    const index = displayedConversations.findIndex(c => c.id === currentId);
-    let nextIndex = index + (direction === 'down' ? 1 : -1);
-    nextIndex = Math.max(0, Math.min(displayedConversations.length - 1, nextIndex));
-    if (nextIndex !== index || !currentId) setFocusedConversationId(displayedConversations[nextIndex]?.id || null);
-  }, [displayedConversations, focusedConversationId, selectedConversationId]);
-  
-  const openFocusedConversation = useCallback(() => {
-    if (focusedConversationId) {
-        const conv = displayedConversations.find(c => c.id === focusedConversationId);
-        if (conv) {
-             setSelectedConversationId(conv.__originalConversationId || conv.id);
-            if (!conv.isRead) markAsRead(conv.id);
-        }
-    }
-  }, [focusedConversationId, displayedConversations, markAsRead]);
-
-  // Key sequence timeout
-  useEffect(() => {
-    let timer: number;
-    if (keySequence.length > 0) {
-        timer = window.setTimeout(() => setKeySequence([]), 2000);
-    }
-    return () => clearTimeout(timer);
-  }, [keySequence]);
-
-  const handleKeyboardShortcut = useCallback((e: KeyboardEvent) => {
-      const target = e.target as HTMLElement;
-      if (target.nodeName === 'INPUT' || target.nodeName === 'TEXTAREA' || target.isContentEditable || composeState.isOpen) {
-        return;
-      }
-      
-      const isMailListView = view === 'mail' && !selectedConversationId;
-      const targetIds = selectedConversationIds.size > 0 
-          ? Array.from(selectedConversationIds) 
-          : (selectedConversationId ? [selectedConversationId] : (focusedConversationId ? [focusedConversationId] : []));
-      
-      if (keySequence.length > 0) {
-          e.preventDefault();
-          const fullSequence = [...keySequence, e.key].join('');
-          if (fullSequence === 'gi') setCurrentSelectionCallback('folder', SystemFolder.INBOX);
-          if (fullSequence === 'gs') setCurrentSelectionCallback('folder', SystemFolder.SENT);
-          setKeySequence([]);
-          return;
-      }
-
-      switch (e.key) {
-        case '?':
-          e.preventDefault();
-          setIsShortcutsModalOpen(p => !p);
-          break;
-        case 'c':
-          e.preventDefault();
-          openCompose();
-          break;
-        case '/':
-          e.preventDefault();
-          document.querySelector<HTMLInputElement>('input[type="search"]')?.focus();
-          break;
-        case 'g':
-          e.preventDefault();
-          setKeySequence(['g']);
-          break;
-        
-        // List Navigation / Actions
-        case 'j':
-        case 'ArrowDown':
-            if (isMailListView) { e.preventDefault(); navigateConversationList('down'); }
-            break;
-        case 'k':
-        case 'ArrowUp':
-            if (isMailListView) { e.preventDefault(); navigateConversationList('up'); }
-            break;
-        case 'Enter':
-            if (isMailListView && focusedConversationId) { e.preventDefault(); openFocusedConversation(); }
-            break;
-        case 'x':
-             if (isMailListView && focusedConversationId) { e.preventDefault(); toggleConversationSelection(focusedConversationId); }
-             break;
-        case 'e':
-            if (view === 'mail' && targetIds.length > 0) { e.preventDefault(); archiveConversation(targetIds); }
-            break;
-        case '#':
-             if (view === 'mail' && targetIds.length > 0) { e.preventDefault(); deleteConversation(targetIds); }
-             break;
-        case 'l':
-             if (view === 'mail' && targetIds.length > 0) { e.preventDefault(); setShortcutTrigger({ type: 'openLabelPopover', ts: Date.now() }); }
-             break;
-        case '_': // Shift + -
-            if (e.shiftKey && view === 'mail' && targetIds.length > 0) { e.preventDefault(); markAsUnread(targetIds); }
-            break;
-        case 'Escape':
-             handleEscape();
-             break;
-      }
-  }, [view, selectedConversationId, focusedConversationId, selectedConversationIds, composeState.isOpen, keySequence, archiveConversation, deleteConversation, markAsUnread, openCompose, handleEscape, navigateConversationList, openFocusedConversation, setCurrentSelectionCallback, toggleConversationSelection]);
-
-
-  const createLabel = useCallback((name: string, color: string) => {
-      const newLabel = { id: `label-${Date.now()}`, name, color, order: labels.length };
-      setLabels(prev => [...prev, newLabel]);
-      addToast(`Label "${name}" created.`);
-  }, [addToast, labels.length]);
-
-  const updateLabel = useCallback((id: string, updates: Partial<Omit<Label, 'id'>>) => {
-      setLabels(prev => prev.map(l => l.id === id ? { ...l, ...updates } : l));
-      addToast(`Label updated.`);
-  }, [addToast]);
-
-  const deleteLabel = useCallback((id: string) => {
-      let labelToDelete: Label | undefined;
-      setLabels(prev => {
-          labelToDelete = prev.find(l => l.id === id);
-          return prev.filter(l => l.id !== id);
-      });
-      if (labelToDelete) {
-          setEmails(prev => prev.map(e => ({ ...e, labelIds: e.labelIds.filter(lid => lid !== id) })));
-          addToast(`Label "${labelToDelete.name}" deleted.`);
-      }
-  }, [addToast]);
-
-  const reorderItems = <T extends { id: string; order: number }>(items: T[], draggedId: string, targetId: string, position: 'top' | 'bottom'): T[] => {
-    if (draggedId === targetId) return items;
-    
-    const localItems = [...items];
-    const draggedItem = localItems.find(i => i.id === draggedId);
-    
-    if (!draggedItem) return items;
-    
-    const itemsWithoutDragged = localItems.filter(i => i.id !== draggedId);
-    
-    let insertIndex = itemsWithoutDragged.findIndex(i => i.id === targetId);
-    if (insertIndex === -1) return items;
-
-    if (position === 'bottom') {
-        insertIndex++;
-    }
-    
-    itemsWithoutDragged.splice(insertIndex, 0, draggedItem);
-    
-    return itemsWithoutDragged.map((item, index) => ({ ...item, order: index }));
-  };
-  
-  const reorderLabel = useCallback((draggedId: string, targetId: string, position: 'top' | 'bottom') => {
-      setLabels(prevLabels => {
-          const updatedLabels = reorderItems(prevLabels, draggedId, targetId, position);
-          return updatedLabels;
-      });
-  }, []);
-
-  const reorderFolder = useCallback((draggedId: string, targetId: string, position: 'top' | 'bottom') => {
-    const draggedFolder = userFolders.find(f => f.id === draggedId);
-    const targetFolder = userFolders.find(f => f.id === targetId);
-
-    if (!draggedFolder || !targetFolder || draggedFolder.parentId !== targetFolder.parentId) {
-        addToast("Folders can only be reordered within the same level.", { duration: 4000 });
-        return;
-    }
-
-    setUserFolders(prevFolders => {
-        const siblings = prevFolders.filter(f => f.parentId === draggedFolder.parentId);
-        const otherFolders = prevFolders.filter(f => f.parentId !== draggedFolder.parentId);
-        
-        const reorderedSiblings = reorderItems(siblings, draggedId, targetId, position);
-        
-        return [...otherFolders, ...reorderedSiblings];
-    });
-  }, [userFolders, addToast]);
-  
-  const createFolder = useCallback((name: string, parentId?: string) => {
-      const siblings = userFolders.filter(f => f.parentId === parentId);
-      const newFolder = { id: `folder-${Date.now()}`, name, parentId, order: siblings.length };
-      setUserFolders(prev => [...prev, newFolder]);
-      addToast(`Folder "${name}" created.`);
-  }, [addToast, userFolders]);
-
-  const updateFolder = useCallback((id: string, newName: string, newParentId?: string) => {
-      setUserFolders(prev => prev.map(f => f.id === id ? { ...f, name: newName, parentId: newParentId || undefined } : f));
-      addToast(`Folder updated.`);
-  }, [addToast]);
-
-  const getFolderDescendants = useCallback((folderId: string): Set<string> => {
-    const descendants = new Set<string>();
-    const findChildren = (parentId: string) => {
-        const children = userFolders.filter(f => f.parentId === parentId);
-        children.forEach(child => {
-            descendants.add(child.id);
-            findChildren(child.id);
-        });
-    };
-    findChildren(folderId);
-    return descendants;
-  }, [userFolders]);
-
-  const deleteFolder = useCallback((id: string) => {
-      let folderToDelete = userFolders.find(f => f.id === id);
-      if (folderToDelete) {
-          const descendantIds = getFolderDescendants(id);
-          const allFolderIdsToDelete = new Set([id, ...descendantIds]);
-          
-          setEmails(prev => prev.map(e => allFolderIdsToDelete.has(e.folderId) ? { ...e, folderId: SystemFolder.ARCHIVE } : e));
-          setUserFolders(prev => prev.filter(f => !allFolderIdsToDelete.has(f.id)));
-          
-          addToast(`Folder "${folderToDelete.name}" and its subfolders deleted. Contents moved to Archive.`);
-      }
-  }, [addToast, userFolders, getFolderDescendants]);
-
-  const updateSignature = useCallback((signature: Signature) => { setAppSettings(prev => ({...prev, signature})); addToast('Signature settings updated.'); }, [addToast]);
-  const updateAutoResponder = useCallback((autoResponder: AutoResponder) => { setAppSettings(prev => ({...prev, autoResponder})); addToast('Auto-responder settings updated.'); }, [addToast]);
-  const addRule = useCallback((ruleData: Omit<Rule, 'id'>) => { const newRule = { ...ruleData, id: `rule-${Date.now()}`}; setAppSettings(prev => ({...prev, rules: [...prev.rules, newRule]})); addToast("Rule added."); }, [addToast]);
-  const deleteRule = useCallback((ruleId: string) => { setAppSettings(prev => ({ ...prev, rules: prev.rules.filter(r => r.id !== ruleId) })); addToast("Rule deleted."); }, [addToast]);
-  const updateSendDelay = useCallback((sendDelay: AppSettings['sendDelay']) => { setAppSettings(prev => ({ ...prev, sendDelay })); addToast("Send delay settings updated."); }, [addToast]);
-  const updateConversationView = useCallback((enabled: boolean) => { setAppSettings(prev => ({ ...prev, conversationView: enabled })); addToast(`Conversation view ${enabled ? 'enabled' : 'disabled'}.`); }, [addToast]);
-  const updateBlockExternalImages = useCallback((enabled: boolean) => { setAppSettings(prev => ({ ...prev, blockExternalImages: enabled })); addToast(`External images will be ${enabled ? 'blocked' : 'shown'} by default.`); }, [addToast]);
-  const updateDisplayDensity = useCallback((density: DisplayDensity) => { setAppSettings(prev => ({ ...prev, displayDensity: density })); addToast(`Display density set to ${density}.`); }, [addToast]);
-
-  const markAsSpam = useCallback((conversationIds: string[]) => {
-    const realIds = getRealConversationIds(conversationIds);
-    moveConversations(realIds, SystemFolder.SPAM);
-  }, [moveConversations, getRealConversationIds]);
-
-  const markAsNotSpam = useCallback((conversationIds: string[]) => {
-    const realIds = getRealConversationIds(conversationIds);
-    moveConversations(realIds, SystemFolder.INBOX);
-  }, [moveConversations, getRealConversationIds]);
-  
   const snoozeConversation = useCallback((conversationIds: string[], until: Date) => {
-    const realIds = getRealConversationIds(conversationIds);
-    const untilISO = until.toISOString();
-    setEmails(prevEmails => {
-        return prevEmails.map(email => {
-            if (realIds.includes(email.conversationId)) {
-                return {
-                    ...email,
-                    snoozedUntil: untilISO,
-                    folderId: SystemFolder.ARCHIVE,
-                    labelIds: [...new Set([...email.labelIds, SystemLabel.SNOOZED])]
-                };
-            }
-            return email;
-        });
-    });
-    addToast(`${realIds.length} conversation(s) snoozed.`);
+    setEmails(prev => prev.map(e => {
+        if(conversationIds.includes(e.conversationId)) {
+            const newLabelIds = [...new Set([...e.labelIds, SystemLabel.SNOOZED])];
+            return {...e, snoozedUntil: until.toISOString(), folderId: SystemFolder.ARCHIVE, labelIds: newLabelIds};
+        }
+        return e;
+    }));
+    addToast(`${conversationIds.length} conversation(s) snoozed.`);
     deselectAllConversations();
-    if (realIds.includes(selectedConversationId!)) setSelectedConversationId(null);
-  }, [addToast, deselectAllConversations, selectedConversationId, getRealConversationIds]);
-
+    if (conversationIds.includes(selectedConversationId || '')) setSelectedConversationId(null);
+  }, [addToast, deselectAllConversations, selectedConversationId]);
+  
   const unsubscribeFromSender = useCallback((senderEmail: string) => {
-      addRule({
-          condition: { field: 'sender', operator: 'contains', value: senderEmail },
-          action: { type: 'moveToFolder', folderId: SystemFolder.TRASH }
-      });
-      addToast(`Unsubscribed from ${senderEmail}. Future messages will be moved to Trash.`);
+    addRule({
+        condition: { field: 'sender', operator: 'contains', value: senderEmail },
+        action: { type: 'moveToFolder', folderId: SystemFolder.TRASH }
+    });
+    addToast(`Unsubscribed from ${senderEmail}. Future messages will be moved to Trash.`);
   }, [addRule, addToast]);
 
-  const addContact = useCallback((contactData: Omit<Contact, 'id'>) => {
-    const newContact: Contact = { ...contactData, id: `contact-${Date.now()}` };
-    setContacts(prev => [...prev, newContact].sort((a,b) => a.name.localeCompare(b.name)));
-    addToast('Contact added.');
-    setSelectedContactId(newContact.id);
-  }, [addToast]);
+  // Bulk selection actions
+  const toggleConversationSelection = useCallback((conversationId: string) => { setSelectedConversationIds(prev => { const next = new Set(prev); if (next.has(conversationId)) { next.delete(conversationId); } else { next.add(conversationId); } return next; }); }, []);
+  const selectAllConversations = useCallback((conversationIds: string[]) => setSelectedConversationIds(new Set(conversationIds)), []);
+  const bulkDelete = useCallback(() => { deleteConversation(Array.from(selectedConversationIds)); deselectAllConversations(); }, [selectedConversationIds, deleteConversation, deselectAllConversations]);
+  const bulkMarkAsRead = useCallback(() => { const ids = Array.from(selectedConversationIds); setEmails(prev => prev.map(e => ids.includes(e.conversationId) ? { ...e, isRead: true } : e)); addToast(`Marked ${ids.length} item(s) as read.`); deselectAllConversations(); }, [selectedConversationIds, deselectAllConversations, addToast]);
+  const bulkMarkAsUnread = useCallback(() => { markAsUnread(Array.from(selectedConversationIds)); deselectAllConversations(); }, [selectedConversationIds, markAsUnread, deselectAllConversations]);
   
-  const updateContact = useCallback((updatedContact: Contact) => {
-    setContacts(prev => prev.map(c => c.id === updatedContact.id ? updatedContact : c).sort((a,b) => a.name.localeCompare(b.name)));
-    addToast('Contact updated.');
-  }, [addToast]);
+  // UI actions
+  const toggleTheme = useCallback(() => { setTheme(prev => { const newTheme = prev === 'light' ? 'dark' : 'light'; localStorage.setItem('theme', newTheme); return newTheme; }); }, []);
+  const toggleSidebar = useCallback(() => { setIsSidebarCollapsed(prev => { const newState = !prev; localStorage.setItem('isSidebarCollapsed', String(newState)); return newState; }); }, []);
+  const reorderSidebarSections = useCallback((draggedId: SidebarSection, targetId: SidebarSection) => {
+      setSidebarSectionOrder(prev => {
+          const draggedIndex = prev.indexOf(draggedId);
+          const targetIndex = prev.indexOf(targetId);
+          const newOrder = [...prev];
+          newOrder.splice(draggedIndex, 1);
+          newOrder.splice(targetIndex, 0, draggedId);
+          return newOrder;
+      });
+  }, []);
+  const handleEscape = useCallback(() => {
+      if(composeState.isOpen && !composeState.isMinimized) closeCompose();
+      else if(selectedConversationId) setSelectedConversationId(null);
+      else if(selectedConversationIds.size > 0) deselectAllConversations();
+  }, [composeState, selectedConversationId, selectedConversationIds, closeCompose, deselectAllConversations]);
 
-  const deleteContact = useCallback((contactId: string) => {
-    setContacts(prev => prev.filter(c => c.id !== contactId));
-    setContactGroups(prev => prev.map(g => ({ ...g, contactIds: g.contactIds.filter(id => id !== contactId) })));
-    addToast('Contact deleted.');
-    setSelectedContactId(null);
-  }, [addToast]);
-  
-  const importContacts = useCallback((newContacts: Omit<Contact, 'id'>[]) => {
-    let importedCount = 0, skippedCount = 0;
-    setContacts(prev => {
-        const existingEmails = new Set(prev.map(c => c.email.toLowerCase()));
-        const contactsToAdd: Contact[] = [];
-        newContacts.forEach((newContact, index) => {
-            if (newContact.email && !existingEmails.has(newContact.email.toLowerCase())) {
-                contactsToAdd.push({ ...newContact, id: `contact-${Date.now()}-${index}` });
-                existingEmails.add(newContact.email.toLowerCase());
-                importedCount++;
-            } else {
-                skippedCount++;
-            }
-        });
-        return contactsToAdd.length > 0 ? [...prev, ...contactsToAdd].sort((a,b) => a.name.localeCompare(b.name)) : prev;
-    });
-    let toastMessage = '';
-    if (importedCount > 0) toastMessage += `Imported ${importedCount} new contact(s). `;
-    if (skippedCount > 0) toastMessage += `Skipped ${skippedCount} duplicate(s).`;
-    addToast(toastMessage || 'No new contacts to import.');
-  }, [addToast]);
-  
-  const createContactGroup = useCallback((name: string) => {
-      const newGroup: ContactGroup = { id: `group-${Date.now()}`, name, contactIds: [] };
-      setContactGroups(prev => [...prev, newGroup].sort((a,b) => a.name.localeCompare(b.name)));
-      addToast(`Group "${name}" created.`);
-  }, [addToast]);
-  
-  const renameContactGroup = useCallback((groupId: string, newName: string) => {
-      setContactGroups(prev => prev.map(g => g.id === groupId ? { ...g, name: newName } : g).sort((a,b) => a.name.localeCompare(b.name)));
-      addToast('Group renamed.');
-  }, [addToast]);
-  
-  const deleteContactGroup = useCallback((groupId: string) => {
-      setContactGroups(prev => prev.filter(g => g.id !== groupId));
-      if (selectedGroupId === groupId) setSelectedGroupId(null);
-      addToast('Group deleted.');
-  }, [addToast, selectedGroupId]);
-  
-  const addContactToGroup = useCallback((groupId: string, contactId: string) => {
-      setContactGroups(prev => prev.map(g => (g.id === groupId && !g.contactIds.includes(contactId)) ? { ...g, contactIds: [...g.contactIds, contactId] } : g));
-      const groupName = contactGroups.find(g => g.id === groupId)?.name;
-      const contactName = contacts.find(c => c.id === contactId)?.name;
-      if(groupName && contactName) addToast(`${contactName} added to ${groupName}.`);
-  }, [addToast, contactGroups, contacts]);
-  
-  const removeContactFromGroup = useCallback((groupId: string, contactId: string) => { setContactGroups(prev => prev.map(g => g.id === groupId ? { ...g, contactIds: g.contactIds.filter(id => id !== contactId) } : g)); }, []);
+  const navigateConversationList = useCallback((direction: 'up' | 'down') => {
+    const ids = displayedConversations.map(c => c.id);
+    if(ids.length === 0) return;
+    const currentIndex = focusedConversationId ? ids.indexOf(focusedConversationId) : -1;
+    let nextIndex;
+    if(direction === 'down') {
+        nextIndex = currentIndex < ids.length - 1 ? currentIndex + 1 : 0;
+    } else { // up
+        nextIndex = currentIndex > 0 ? currentIndex - 1 : ids.length - 1;
+    }
+    setFocusedConversationId(ids[nextIndex]);
+  }, [displayedConversations, focusedConversationId]);
 
-  const setViewCallback = useCallback((newView: View) => { setView(newView); setSelectedConversationId(null); setFocusedConversationId(null); setSearchQuery(''); setSelectedConversationIds(new Set()); setSelectedContactId(null); }, []);
+  const openFocusedConversation = useCallback(() => {
+    if(focusedConversationId) {
+        setSelectedConversationId(focusedConversationId);
+        markAsRead(focusedConversationId);
+    }
+  }, [focusedConversationId, markAsRead]);
+  
+  const clearShortcutTrigger = useCallback(() => setShortcutTrigger(null), []);
 
-  const completeFirstTimeSetup = useCallback((name: string, accountType: Identity['accountType']) => {
-    if (!user) return;
+  const handleKeyboardShortcut = useCallback((e: KeyboardEvent) => {
+    if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement || e.target instanceof HTMLDivElement && e.target.isContentEditable) return;
+    if (e.metaKey || e.ctrlKey || e.altKey) return; // Ignore complex combos for now
+
+    const newKeySequence = [...keySequence, e.key];
+    
+    // Check for multi-key shortcuts
+    const sequenceStr = newKeySequence.join('');
+    if (sequenceStr === 'gi') {
+        _setCurrentSelection({type: 'folder', id: SystemFolder.INBOX});
+        setKeySequence([]); return;
+    }
+    if (sequenceStr === 'gs') {
+        _setCurrentSelection({type: 'folder', id: SystemFolder.SENT});
+        setKeySequence([]); return;
+    }
+    
+    // Reset sequence if it doesn't match any multi-key shortcut start
+    if ('gs'.startsWith(sequenceStr)) {
+        setKeySequence(newKeySequence);
+    } else {
+        setKeySequence([]);
+    }
+
+    // Single key shortcuts
+    switch (e.key) {
+      case 'c': openCompose(); break;
+      case '/': e.preventDefault(); setSearchQuery(''); break;
+      case 'Escape': handleEscape(); break;
+      case 'j':
+      case 'ArrowDown':
+          e.preventDefault();
+          navigateConversationList('down');
+          break;
+      case 'k':
+      case 'ArrowUp':
+          e.preventDefault();
+          navigateConversationList('up');
+          break;
+      case 'Enter':
+          e.preventDefault();
+          openFocusedConversation();
+          break;
+      case 'x':
+          if(focusedConversationId) toggleConversationSelection(focusedConversationId);
+          break;
+      case '#':
+          const idsToDelete = selectedConversationIds.size > 0 ? Array.from(selectedConversationIds) : (focusedConversationId ? [focusedConversationId] : []);
+          if(idsToDelete.length > 0) deleteConversation(idsToDelete);
+          break;
+       case 'e':
+          const idsToArchive = selectedConversationIds.size > 0 ? Array.from(selectedConversationIds) : (focusedConversationId ? [focusedConversationId] : []);
+          if(idsToArchive.length > 0) archiveConversation(idsToArchive);
+          break;
+       case '_':
+            const idsToMarkUnread = selectedConversationIds.size > 0 ? Array.from(selectedConversationIds) : (focusedConversationId ? [focusedConversationId] : []);
+            if (idsToMarkUnread.length > 0) markAsUnread(idsToMarkUnread);
+            break;
+       case 'l':
+             const idsForLabel = selectedConversationIds.size > 0 ? Array.from(selectedConversationIds) : (focusedConversationId ? [focusedConversationId] : []);
+            if (idsForLabel.length > 0) setShortcutTrigger({ type: 'openLabelPopover', ts: Date.now() });
+            break;
+       case '?':
+            setIsShortcutsModalOpen(true);
+            break;
+    }
+  }, [keySequence, openCompose, handleEscape, navigateConversationList, openFocusedConversation, focusedConversationId, toggleConversationSelection, deleteConversation, selectedConversationIds, archiveConversation, markAsUnread]);
+
+
+  
+  const completeFirstTimeSetup = useCallback((name: string, accountType: 'personal' | 'business') => {
+    if(!user) return;
     const newIdentity: Identity = {
         id: `identity-${Date.now()}`,
-        name,
+        name: name,
         email: user.email,
-        accountType
+        accountType: accountType,
     };
     setAppSettings(prev => ({...prev, identities: [newIdentity]}));
-    setUser(prev => prev ? {...prev, name} : null);
-    
-    // Create or update the user's own contact
-    const selfContact: Contact = { id: user.id, name, email: user.email };
-    setContacts(prev => {
-        const existing = prev.find(c => c.id === user.id);
-        if (existing) {
-            return prev.map(c => c.id === user.id ? selfContact : c).sort((a,b) => a.name.localeCompare(b.name));
-        }
-        return [...prev, selfContact].sort((a,b) => a.name.localeCompare(b.name));
-    });
-
-    localStorage.setItem('isSetupComplete', 'true');
     setIsSetupComplete(true);
-    addToast('Welcome! Your settings have been saved.');
-  }, [user, addToast]);
-
-  const updateIdentity = useCallback((updatedIdentity: Identity) => {
-      if (!user) return;
-      setAppSettings(prev => ({
-          ...prev,
-          identities: prev.identities.map(id => id.id === updatedIdentity.id ? updatedIdentity : id)
-      }));
-
-      // If the primary identity was updated, update the user object
-      if (updatedIdentity.email === user.email) {
-          setUser(prev => prev ? { ...prev, name: updatedIdentity.name } : null);
-      }
-      
-      // Also update the user's "self" contact
-      const selfContact: Contact = { id: user.id, name: updatedIdentity.name, email: user.email };
-       setContacts(prev => prev.map(c => c.id === user.id ? selfContact : c).sort((a,b) => a.name.localeCompare(b.name)));
-
-      addToast('Identity updated.');
-  }, [user, addToast]);
+    saveToLocalStorage('isSetupComplete', true);
+    addToast("Welcome! Your settings have been saved.");
+  }, [user, addToast, saveToLocalStorage]);
+  
+  const updateIdentity = useCallback((identity: Identity) => {
+    setAppSettings(prev => ({...prev, identities: prev.identities.map(id => id.id === identity.id ? identity : id)}));
+    addToast("Identity updated.");
+  }, [addToast]);
 
   const requestNotificationPermission = useCallback(async () => {
     if (!('Notification' in window)) {
-        addToast("This browser does not support desktop notification", { duration: 5000 });
-        return;
+      addToast("This browser does not support desktop notification");
+      return;
     }
     const permission = await Notification.requestPermission();
     setNotificationPermission(permission);
     if (permission === 'granted') {
-      setAppSettings(prev => ({ ...prev, notifications: { ...prev.notifications, enabled: true } }));
-      addToast('Desktop notifications enabled!');
+        updateNotificationSettings(true);
+        addToast("Desktop notifications enabled!");
     } else {
-      addToast('Notifications permission not granted.');
+        updateNotificationSettings(false);
+        addToast("Notifications permission not granted.");
     }
   }, [addToast]);
 
   const updateNotificationSettings = useCallback((enabled: boolean) => {
-    if (notificationPermission !== 'granted' && enabled) {
-        addToast('Please enable notification permissions in your browser first.');
+    if(enabled && notificationPermission !== 'granted') {
+        addToast("Please enable notification permissions in your browser first.");
         return;
     }
-    setAppSettings(prev => ({ ...prev, notifications: { enabled } }));
-    addToast(`Desktop notifications ${enabled ? 'enabled' : 'disabled'}.`);
-  }, [addToast, notificationPermission]);
+    setAppSettings(prev => ({...prev, notifications: { enabled }}));
+    addToast(enabled ? "Desktop notifications enabled." : "Desktop notifications disabled.");
+  }, [notificationPermission, addToast]);
+
+  // Label Management
+  const createLabel = useCallback((name: string, color: string) => { const newLabel: Label = { id: `label-${Date.now()}`, name, color, order: labels.length }; setLabels(prev => [...prev, newLabel]); addToast(`Label "${name}" created.`); }, [labels.length, addToast]);
+  const updateLabel = useCallback((id: string, updates: Partial<Omit<Label, 'id'>>) => { setLabels(prev => prev.map(l => l.id === id ? { ...l, ...updates } : l)); addToast("Label updated."); }, [addToast]);
+  const deleteLabel = useCallback((id: string) => { setEmails(prev => prev.map(e => ({...e, labelIds: e.labelIds.filter(lId => lId !== id)}))); setLabels(prev => prev.filter(l => l.id !== id)); addToast(`Label "${labels.find(l=>l.id===id)?.name || ''}" deleted.`); }, [labels, addToast]);
   
-  const createTemplate = useCallback((name: string, body: string) => {
-    const newTemplate: Template = { id: `template-${Date.now()}`, name, body };
-    setAppSettings(prev => ({ ...prev, templates: [...prev.templates, newTemplate] }));
-    addToast(`Template "${name}" created.`);
-  }, [addToast]);
+  const reorderLabel = useCallback((draggedId: string, targetId: string, position: 'top' | 'bottom') => {
+      setLabels(prevLabels => {
+          const draggedIndex = prevLabels.findIndex(l => l.id === draggedId);
+          const targetIndex = prevLabels.findIndex(l => l.id === targetId);
+          if (draggedIndex === -1 || targetIndex === -1) return prevLabels;
 
-  const updateTemplate = useCallback((id: string, updates: Partial<Omit<Template, 'id'>>) => {
-    setAppSettings(prev => ({
-        ...prev,
-        templates: prev.templates.map(t => (t.id === id ? { ...t, ...updates } : t)),
-    }));
-    addToast(`Template updated.`);
-  }, [addToast]);
+          const newLabels = [...prevLabels];
+          const [draggedItem] = newLabels.splice(draggedIndex, 1);
+          
+          let insertIndex = targetIndex;
+          if (position === 'bottom') insertIndex += 1;
+          if (draggedIndex < targetIndex && position === 'bottom') insertIndex -=1;
 
-  const deleteTemplate = useCallback((id: string) => {
-    setAppSettings(prev => ({
-        ...prev,
-        templates: prev.templates.filter(t => t.id !== id),
-    }));
-    addToast('Template deleted.');
-  }, [addToast]);
-
-  useEffect(() => {
-    if (!appSettings.notifications.enabled || notificationPermission !== 'granted' || !user) {
-        return;
+          newLabels.splice(insertIndex, 0, draggedItem);
+          return newLabels.map((label, index) => ({ ...label, order: index }));
+      });
+  }, []);
+  
+  // Folder Management
+  const createFolder = useCallback((name: string, parentId?: string) => { const newFolder: UserFolder = { id: `folder-${Date.now()}`, name, parentId, order: userFolders.filter(f => f.parentId === parentId).length }; setUserFolders(prev => [...prev, newFolder]); addToast(`Folder "${name}" created.`); }, [userFolders, addToast]);
+  const updateFolder = useCallback((id: string, newName: string, newParentId?: string) => { setUserFolders(prev => prev.map(f => f.id === id ? { ...f, name: newName, parentId: newParentId } : f)); addToast("Folder updated."); }, [addToast]);
+  
+  const getFolderDescendants = useCallback((folderId: string): Set<string> => {
+    const descendants = new Set<string>();
+    const toProcess = [folderId];
+    while(toProcess.length > 0) {
+        const currentId = toProcess.pop()!;
+        const children = userFolders.filter(f => f.parentId === currentId);
+        children.forEach(child => {
+            descendants.add(child.id);
+            toProcess.push(child.id);
+        });
     }
+    return descendants;
+  }, [userFolders]);
 
-    const intervalId = setInterval(() => {
-        if (document.hidden) {
-            const newConvId = `conv-${Date.now()}`;
-            const newEmail: Email = {
-                id: `email-${Date.now()}`,
-                conversationId: newConvId,
-                senderName: 'Acme Corp',
-                senderEmail: 'notifications@acme.inc',
-                recipientEmail: user.email,
-                subject: 'Weekly Digest & Important Updates',
-                body: '<p>This is a simulated new email to demonstrate desktop notifications. Click to view.</p>',
-                snippet: 'This is a simulated new email...',
-                timestamp: new Date().toISOString(),
-                isRead: false,
-                folderId: SystemFolder.INBOX,
-                labelIds: [],
-            };
-            
-            const notification = new Notification(`New Email from ${newEmail.senderName}`, {
-                body: newEmail.subject,
-                icon: '/logo.svg', // A generic icon
-            });
+  const deleteFolder = useCallback((id: string) => {
+    const folderToDelete = userFolders.find(f => f.id === id);
+    if (!folderToDelete) return;
 
-            notification.onclick = () => {
-                window.focus();
-                setEmails(prev => [newEmail, ...prev]);
-                setView('mail');
-                setCurrentSelection({type: 'folder', id: SystemFolder.INBOX});
-                setSelectedConversationId(newConvId);
-                setTimeout(() => markAsRead(newConvId), 100);
-            };
-        }
-    }, 30000); // Check every 30 seconds
+    const descendantIds = getFolderDescendants(id);
+    const idsToDelete = new Set([id, ...descendantIds]);
+    
+    setEmails(prev => prev.map(e => idsToDelete.has(e.folderId) ? { ...e, folderId: SystemFolder.ARCHIVE } : e));
+    setUserFolders(prev => prev.filter(f => !idsToDelete.has(f.id)));
+    addToast(`Folder "${folderToDelete.name}" and its subfolders deleted. Contents moved to Archive.`);
+  }, [userFolders, getFolderDescendants, addToast]);
 
-    return () => clearInterval(intervalId);
-  }, [appSettings.notifications.enabled, notificationPermission, user, setEmails, setView, setCurrentSelectionCallback, setSelectedConversationId, markAsRead]);
+  const reorderFolder = useCallback((draggedId: string, targetId: string, position: 'top' | 'bottom') => {
+      setUserFolders(prevFolders => {
+          const draggedFolder = prevFolders.find(f => f.id === draggedId);
+          const targetFolder = prevFolders.find(f => f.id === targetId);
+          if (!draggedFolder || !targetFolder || draggedFolder.parentId !== targetFolder.parentId) {
+              addToast("Folders can only be reordered within the same level.");
+              return prevFolders;
+          }
+          
+          const siblings = prevFolders.filter(f => f.parentId === draggedFolder.parentId).sort((a,b) => a.order - b.order);
+          const draggedIndex = siblings.findIndex(f => f.id === draggedId);
+          const targetIndex = siblings.findIndex(f => f.id === targetId);
 
-  const contextValue: AppContextType = {
-    user, emails, conversations: allConversations, labels: sortedLabels, userFolders, folderTree, flattenedFolderTree, currentSelection, selectedConversationId, focusedConversationId, composeState, searchQuery, selectedConversationIds, theme, displayedConversations, isSidebarCollapsed, view, appSettings, contacts, contactGroups, selectedContactId, selectedGroupId, isLoading, isSetupComplete, notificationPermission, isShortcutsModalOpen, shortcutTrigger, isOnline,
+          const newSiblings = [...siblings];
+          const [movedItem] = newSiblings.splice(draggedIndex, 1);
+          
+          let insertIndex = targetIndex;
+          if (position === 'bottom') insertIndex += 1;
+           if (draggedIndex < targetIndex && position === 'bottom') insertIndex -=1;
+          
+          newSiblings.splice(insertIndex, 0, movedItem);
+          
+          const updatedOrders = new Map<string, number>();
+          newSiblings.forEach((f, index) => updatedOrders.set(f.id, index));
+          
+          return prevFolders.map(f => updatedOrders.has(f.id) ? { ...f, order: updatedOrders.get(f.id)! } : f);
+      });
+  }, [addToast]);
+
+  // Contacts
+  const addContact = useCallback((contactData: Omit<Contact, 'id'>) => {
+      const newContact: Contact = { id: `contact-${Date.now()}`, ...contactData };
+      setContacts(prev => [newContact, ...prev].sort((a,b) => a.name.localeCompare(b.name)));
+      addToast("Contact added.");
+  }, [addToast]);
+  const updateContact = useCallback((updatedContact: Contact) => {
+      setContacts(prev => prev.map(c => c.id === updatedContact.id ? updatedContact : c));
+      addToast("Contact updated.");
+  }, [addToast]);
+  const deleteContact = useCallback((contactId: string) => {
+      setContacts(prev => prev.filter(c => c.id !== contactId));
+      setContactGroups(prev => prev.map(g => ({...g, contactIds: g.contactIds.filter(id => id !== contactId)})));
+      setSelectedContactId(null);
+      addToast("Contact deleted.");
+  }, [addToast]);
+  
+  const importContacts = useCallback((newContacts: Omit<Contact, 'id'>[]) => {
+      let addedCount = 0;
+      let skippedCount = 0;
+      setContacts(prev => {
+          const existingEmails = new Set(prev.map(c => c.email.toLowerCase()));
+          const contactsToAdd: Contact[] = [];
+          
+          newContacts.forEach(newContact => {
+              if(!existingEmails.has(newContact.email.toLowerCase())) {
+                  contactsToAdd.push({ id: `contact-${Date.now()}-${addedCount}`, ...newContact });
+                  existingEmails.add(newContact.email.toLowerCase());
+                  addedCount++;
+              } else {
+                  skippedCount++;
+              }
+          });
+          return [...prev, ...contactsToAdd].sort((a,b) => a.name.localeCompare(b.name));
+      });
+      if(addedCount > 0) addToast(`Imported ${addedCount} new contact(s).`);
+      if(skippedCount > 0) addToast(`Skipped ${skippedCount} duplicate(s).`);
+      if(addedCount === 0 && skippedCount > 0) addToast("No new contacts to import.");
+  }, [addToast]);
+  
+  // Contact Groups
+  const createContactGroup = useCallback((name: string) => { const newGroup = {id: `group-${Date.now()}`, name, contactIds: []}; setContactGroups(prev => [...prev, newGroup]); addToast(`Group "${name}" created.`); }, [addToast]);
+  const renameContactGroup = useCallback((groupId: string, newName: string) => { setContactGroups(prev => prev.map(g => g.id === groupId ? {...g, name: newName} : g)); addToast("Group renamed."); }, [addToast]);
+  const deleteContactGroup = useCallback((groupId: string) => { setContactGroups(prev => prev.filter(g => g.id !== groupId)); addToast("Group deleted."); }, [addToast]);
+  const addContactToGroup = useCallback((groupId: string, contactId: string) => { setContactGroups(prev => prev.map(g => g.id === groupId ? {...g, contactIds: [...new Set([...g.contactIds, contactId])]} : g)); const gName = contactGroups.find(g=>g.id===groupId)?.name || ''; const cName = contacts.find(c=>c.id===contactId)?.name || ''; addToast(`${cName} added to ${gName}.`); }, [contactGroups, contacts, addToast]);
+  const removeContactFromGroup = useCallback((groupId: string, contactId: string) => { setContactGroups(prev => prev.map(g => g.id === groupId ? {...g, contactIds: g.contactIds.filter(id => id !== contactId)} : g)); }, []);
+  
+
+  const value = {
+    user, emails, labels, userFolders, conversations: allConversations, currentSelection, selectedConversationId, composeState, searchQuery, selectedConversationIds, theme, displayedConversations, isSidebarCollapsed, sidebarSectionOrder, view, appSettings, contacts, contactGroups, selectedContactId, selectedGroupId, isLoading, isSetupComplete, notificationPermission, isShortcutsModalOpen, shortcutTrigger, focusedConversationId, isOnline, isDraggingEmail,
     login, logout, checkUserSession,
-    setCurrentSelection: setCurrentSelectionCallback, setSelectedConversationId, setSearchQuery,
-    openCompose, closeCompose, toggleMinimizeCompose, sendEmail, cancelSend, saveDraft, deleteDraft,
-    moveConversations,
-    toggleLabel, applyLabel, removeLabel, deleteConversation, archiveConversation, markAsRead, markAsUnread, markAsSpam, markAsNotSpam, snoozeConversation, unsnoozeConversation, unsubscribeFromSender,
+    setCurrentSelection, setSelectedConversationId, setSearchQuery, 
+    openCompose, closeCompose, toggleMinimizeCompose, sendEmail, saveDraft, deleteDraft, cancelSend,
+    moveConversations, toggleLabel, applyLabel, removeLabel, deleteConversation, archiveConversation, markAsRead, markAsUnread, markAsSpam, markAsNotSpam, snoozeConversation, unsnoozeConversation, unsubscribeFromSender,
     toggleConversationSelection, selectAllConversations, deselectAllConversations, bulkDelete, bulkMarkAsRead, bulkMarkAsUnread,
-    toggleTheme, toggleSidebar, handleEscape, navigateConversationList, openFocusedConversation, setView: setViewCallback, setIsShortcutsModalOpen, handleKeyboardShortcut, clearShortcutTrigger: () => setShortcutTrigger(null),
+    toggleTheme, toggleSidebar, reorderSidebarSections, handleEscape, navigateConversationList, openFocusedConversation, setView, setIsShortcutsModalOpen, handleKeyboardShortcut, clearShortcutTrigger, setIsDraggingEmail,
     updateSignature, updateAutoResponder, addRule, deleteRule, updateSendDelay, completeFirstTimeSetup, updateIdentity, requestNotificationPermission, updateNotificationSettings, updateConversationView, updateBlockExternalImages, updateDisplayDensity, createTemplate, updateTemplate, deleteTemplate,
     createLabel, updateLabel, deleteLabel, reorderLabel,
-    createFolder, updateFolder, deleteFolder, getFolderDescendants, reorderFolder,
+    createFolder, updateFolder, deleteFolder, getFolderDescendants, folderTree, flattenedFolderTree, reorderFolder,
     addContact, updateContact, deleteContact, setSelectedContactId, importContacts,
     createContactGroup, renameContactGroup, deleteContactGroup, addContactToGroup, removeContactFromGroup, setSelectedGroupId,
   };
 
-  return <AppContext.Provider value={useMemo(() => contextValue, [contextValue])}>{children}</AppContext.Provider>;
+  return <AppContext.Provider value={value}>{children}</AppContext.Provider>;
 };
 
 export const useAppContext = (): AppContextType => {
   const context = useContext(AppContext);
-  if (context === undefined) throw new Error('useAppContext must be used within an AppContextProvider');
+  if (context === undefined) {
+    throw new Error('useAppContext must be used within an AppContextProvider');
+  }
   return context;
 };

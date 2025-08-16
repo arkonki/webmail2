@@ -1,12 +1,11 @@
-
 import React, { useState } from 'react';
 import { MailIcon } from './icons/MailIcon';
 import { useAppContext } from '../context/AppContext';
 
 const Login: React.FC = () => {
   const { login, isLoading } = useAppContext();
-  const [email, setEmail] = useState('test.user@example.com');
-  const [password, setPassword] = useState('password');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -22,10 +21,10 @@ const Login: React.FC = () => {
             Webmail Client
           </h2>
           <p className="mt-2 text-sm text-gray-600 dark:text-gray-400">
-            A mock-data demonstration.
+            IMAP / SMTP Mail Client
           </p>
           <p className="mt-1 text-xs text-gray-500 dark:text-gray-500">
-            (Enter any non-empty credentials)
+            Connect to your IMAP account.
           </p>
         </div>
 
@@ -67,7 +66,7 @@ const Login: React.FC = () => {
               disabled={isLoading}
               className="relative flex justify-center w-full px-4 py-2 text-sm font-medium text-white border border-transparent rounded-md group bg-primary hover:bg-primary-hover focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary disabled:bg-gray-400 dark:disabled:bg-gray-600"
             >
-              {isLoading ? 'Signing in...' : 'Sign in'}
+              {isLoading ? "Signing in..." : "Sign in"}
             </button>
           </div>
         </form>

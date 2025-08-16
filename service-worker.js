@@ -1,6 +1,6 @@
 // service-worker.js
 
-const CACHE_NAME = 'webmail-v1';
+const CACHE_NAME = 'webmail-v7';
 const APP_SHELL_URLS = [
   '/',
   '/index.html'
@@ -32,6 +32,11 @@ self.addEventListener('activate', event => {
 });
 
 self.addEventListener('fetch', event => {
+  // Ignore API requests and let the browser handle them directly.
+  if (event.request.url.includes('/api/')) {
+    return; 
+  }
+
   // Use a network-first strategy for navigation requests (the main HTML document).
   if (event.request.mode === 'navigate') {
     event.respondWith(
