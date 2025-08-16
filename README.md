@@ -2,6 +2,27 @@
 
 This guide provides step-by-step instructions for deploying the Modern Webmail Client application on a server running Apache. We will use PM2 to manage the Node.js backend server and configure Apache as a reverse proxy to serve both the frontend application and the backend API.
 
+## 0. Environment Configuration (Crucial!)
+
+This application uses environment variables for critical security keys. You must configure them before running the server.
+
+1.  **Create a `.env` file**: In the root of the project, create a file named `.env`. You can do this by copying the example file:
+    ```bash
+    cp .env.example .env
+    ```
+
+2.  **Generate Production Keys**: The `.env` file comes with pre-filled keys for development. **For a production deployment, you MUST replace these with your own unique, secure keys.** You can generate strong keys using `openssl` in your terminal:
+
+    ```bash
+    # For JWT_SECRET
+    openssl rand -hex 32
+
+    # For ENCRYPTION_KEY
+    openssl rand -hex 32
+    ```
+
+    Copy the generated values into your `.env` file. On a production server, it's even better to set these as system environment variables directly, rather than using a `.env` file.
+
 ## 1. Prerequisites
 
 Before you begin, ensure you have the following installed on your server (e.g., a Debian-based Linux distribution like Ubuntu):

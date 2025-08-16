@@ -1,5 +1,5 @@
 
-import express, { Request, Response, NextFunction } from 'express';
+import express, { Request as ExpressRequest, Response as ExpressResponse, NextFunction } from 'express';
 import cors from 'cors';
 import { ImapFlow } from 'imapflow';
 import dotenv from 'dotenv';
@@ -7,6 +7,7 @@ import { simpleParser } from 'mailparser';
 import nodemailer from 'nodemailer';
 import jwt from 'jsonwebtoken';
 import crypto from 'crypto';
+import { process } from 'process';
 
 dotenv.config();
 
@@ -69,7 +70,7 @@ app.use(cors());
 app.use(express.json({ limit: '10mb' }));
 
 // --- Authentication Middleware ---
-const authMiddleware = (req: Request, res: Response, next: NextFunction) => {
+const authMiddleware = (req: ExpressRequest, res: ExpressResponse, next: NextFunction) => {
     const authHeader = req.headers.authorization;
     if (!authHeader || !authHeader.startsWith('Bearer ')) {
         return res.status(401).json({ success: false, message: 'Authorization token is required.' });
@@ -90,7 +91,7 @@ const scheduledJobs = new Map<string, NodeJS.Timeout>();
 
 // --- API Endpoints ---
 
-app.post('/api/login', async (req: Request, res: Response) => {
+app.post('/api/login', async (req: ExpressRequest, res: ExpressResponse) => {
     const { email, password } = req.body;
     if (!email || !password) {
         return res.status(400).json({ success: false, message: 'Email and password are required.' });
@@ -116,7 +117,7 @@ app.post('/api/login', async (req: Request, res: Response) => {
     }
 });
 
-app.post('/api/folders', authMiddleware, async (req: Request, res: Response) => {
+app.post('/api/folders', authMiddleware, async (req: ExpressRequest, res: ExpressResponse) => {
     const { email, password } = req.auth!;
     const logPrefix = `[FOLDERS FOR ${email}]`;
 
@@ -159,7 +160,7 @@ app.post('/api/folders', authMiddleware, async (req: Request, res: Response) => 
     }
 });
 
-app.post('/api/sync', authMiddleware, async (req: Request, res: Response) => {
+app.post('/api/sync', authMiddleware, async (req: ExpressRequest, res: ExpressResponse) => {
     const { email, password } = req.auth!;
     const logPrefix = `[SYNC FOR ${email}]`;
     const client = new ImapFlow({
@@ -219,7 +220,7 @@ app.post('/api/sync', authMiddleware, async (req: Request, res: Response) => {
 });
 
 // Note: test-connection remains unprotected as it's a developer tool for explicit password testing.
-app.post('/api/test-connection', async (req: Request, res: Response) => {
+app.post('/api/test-connection', async (req: ExpressRequest, res: ExpressResponse) => {
     const { email, password } = req.body;
     if (!email || !password) return res.status(400).json({ success: false, message: 'Email and password are required.' });
     const client = new ImapFlow({ host: 'mail.veebimajutus.ee', port: 993, secure: true, auth: { user: email, pass: password }, logger: false });
@@ -234,7 +235,7 @@ app.post('/api/test-connection', async (req: Request, res: Response) => {
     }
 });
 
-app.post('/api/send', authMiddleware, async (req: Request, res: Response) => {
+app.post('/api/send', authMiddleware, async (req: ExpressRequest, res: ExpressResponse) => {
     const { email, password } = req.auth!;
     const { from, to, cc, bcc, subject, body, attachments } = req.body;
     if (!to) return res.status(400).json({ success: false, message: 'Recipient is required.' });
@@ -258,7 +259,7 @@ app.post('/api/send', authMiddleware, async (req: Request, res: Response) => {
     }
 });
 
-app.post('/api/schedule-send', authMiddleware, async (req: Request, res: Response) => {
+app.post('/api/schedule-send', authMiddleware, async (req: ExpressRequest, res: ExpressResponse) => {
     const { email, password } = req.auth!;
     const { from, to, cc, bcc, subject, body, attachments, scheduleDate } = req.body;
     if (!to || !scheduleDate) return res.status(400).json({ success: false, message: 'Missing required fields for scheduling.' });
@@ -286,7 +287,7 @@ app.post('/api/schedule-send', authMiddleware, async (req: Request, res: Respons
     res.json({ success: true, message: 'Email scheduled successfully.', jobId });
 });
 
-app.post('/api/cancel-scheduled-send', authMiddleware, async (req: Request, res: Response) => {
+app.post('/api/cancel-scheduled-send', authMiddleware, async (req: ExpressRequest, res: ExpressResponse) => {
     const { jobId } = req.body;
     if (!jobId) return res.status(400).json({ success: false, message: 'Job ID is required.' });
     const timeoutId = scheduledJobs.get(jobId);
