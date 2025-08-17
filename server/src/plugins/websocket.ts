@@ -3,6 +3,7 @@ import fp from 'fastify-plugin';
 import fastifyWebsocket from '@fastify/websocket';
 import jwt from 'jsonwebtoken';
 import config from '../config';
+import { WebSocket } from 'ws';
 
 // Simple in-memory store for clients for this example
 // In a clustered production setup, you'd use Redis Pub/Sub to broadcast across instances
@@ -27,7 +28,7 @@ async function websocketPlugin(server: FastifyInstance) {
             });
           }
         } catch (error) {
-          fastify.log.error('WebSocket auth error', error);
+          fastify.log.error({ msg: 'WebSocket auth error', error });
           connection.socket.close();
         }
       });

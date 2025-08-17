@@ -1,12 +1,25 @@
 /// <reference types="node" />
 
-import Fastify from 'fastify';
+import Fastify, { FastifyRequest, FastifyReply } from 'fastify';
 import cors from '@fastify/cors';
 import swaggerPlugin from './plugins/swagger';
 import websocketPlugin from './plugins/websocket';
 import authPlugin from './plugins/auth';
 import routes from './routes';
 import config from './config';
+import { process } from 'process';
+
+declare module 'fastify' {
+  interface FastifyInstance {
+    authenticate: (request: FastifyRequest, reply: FastifyReply) => Promise<void>;
+  }
+  interface FastifyRequest {
+    user: {
+      id: string;
+      email: string;
+    };
+  }
+}
 
 const server = Fastify({
   logger: {
