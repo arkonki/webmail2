@@ -7,7 +7,6 @@ import websocketPlugin from './plugins/websocket';
 import authPlugin from './plugins/auth';
 import routes from './routes';
 import config from './config';
-import { process } from 'process';
 
 declare module 'fastify' {
   interface FastifyInstance {

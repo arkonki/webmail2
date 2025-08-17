@@ -2,7 +2,6 @@
 
 import './send.worker';
 import './sync.worker';
-import { process } from 'process';
 
 console.log('Workers are running...');
 

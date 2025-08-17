@@ -3,15 +3,6 @@ import fp from 'fastify-plugin';
 import jwt from 'jsonwebtoken';
 import config from '../config';
 
-declare module "fastify" {
-  interface FastifyRequest {
-    user: {
-      id: string;
-      email: string;
-    };
-  }
-}
-
 const authPlugin: FastifyPluginAsync = async (server: FastifyInstance) => {
   server.decorate('authenticate', async (request: FastifyRequest, reply: FastifyReply) => {
     try {
