@@ -1,9 +1,10 @@
+import 'fastify';
 import { FastifyInstance, FastifyPluginAsync, FastifyRequest, FastifyReply } from 'fastify';
 import fp from 'fastify-plugin';
 import jwt from 'jsonwebtoken';
 import config from '../config';
 
-declare module 'fastify' {
+declare module "fastify" {
   interface FastifyRequest {
     user: {
       id: string;
