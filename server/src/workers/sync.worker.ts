@@ -1,6 +1,5 @@
 import { Worker, Job } from 'bullmq';
 import redis from '../lib/redis';
-import prisma from '../lib/prisma';
 import { CryptoService } from '../services/crypto.service';
 import { ImapService } from '../services/imap.service';
 import { clients } from '../plugins/websocket';
@@ -16,11 +15,11 @@ const mailSyncWorker = new Worker('mail-sync', async (job: Job<MailSyncJobData>)
 
     // This is a placeholder for a very complex process.
     // A real implementation would:
-    // 1. Get user's account and decrypt password.
+    // 1. Get user's account and decrypt password from the DB using `pg`.
     // 2. Connect to IMAP server using ImapService.
     // 3. If fullSync, fetch all folders and messages, parsing and storing them in PostgreSQL.
     //    - This should be done in batches to avoid memory issues.
-    //    - Use Prisma transactions for data integrity.
+    //    - Use DB transactions for data integrity.
     // 4. If not fullSync (i.e., from an IDLE update), fetch only new messages.
     // 5. After fetching a new message, send a WebSocket event to the client.
     //    const clientSocket = clients.get(userId);

@@ -1,7 +1,6 @@
 import { FastifyInstance } from 'fastify';
-import prisma from '../lib/prisma';
+import db from '../lib/db';
 import { sendEmailQueue } from '../services/queue.service';
-import { z } from 'zod';
 
 export default async function (server: FastifyInstance) {
 
@@ -14,17 +13,24 @@ export default async function (server: FastifyInstance) {
     
     const pageNum = parseInt(page, 10);
     const size = parseInt(pageSize, 10);
+    const offset = (pageNum - 1) * size;
 
-    const emails = await prisma.email.findMany({
-        where: {
-            account: { user: { id: request.user.id } },
-            folder: { path: folder }
-        },
-        orderBy: { timestamp: 'desc' },
-        skip: (pageNum - 1) * size,
-        take: size,
-        include: { attachments: true }
-    });
+    const query = `
+      SELECT e.*,
+        (
+          SELECT COALESCE(json_agg(json_build_object('id', att.id, 'filename', att.filename, 'mimeType', att."mimeType", 'size', att.size)), '[]')
+          FROM "Attachment" att WHERE att."emailId" = e.id
+        ) as attachments
+      FROM "Email" e
+      JOIN "Account" a ON e."accountId" = a.id
+      JOIN "Folder" f ON e."folderId" = f.id
+      WHERE a."userId" = $1 AND f.path = $2
+      ORDER BY e.timestamp DESC
+      LIMIT $3
+      OFFSET $4
+    `;
+
+    const { rows: emails } = await db.query(query, [request.user.id, folder, size, offset]);
 
     return { emails };
   });

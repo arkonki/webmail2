@@ -1,5 +1,6 @@
 /// <reference types="node" />
 
+import { process } from 'node:process';
 import Fastify, { FastifyRequest, FastifyReply } from 'fastify';
 import cors from '@fastify/cors';
 import swaggerPlugin from './plugins/swagger';

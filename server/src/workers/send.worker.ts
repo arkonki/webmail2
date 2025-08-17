@@ -1,6 +1,6 @@
 import { Worker, Job } from 'bullmq';
 import redis from '../lib/redis';
-import prisma from '../lib/prisma';
+import db from '../lib/db';
 import { CryptoService } from '../services/crypto.service';
 import { SmtpService } from '../services/smtp.service';
 
@@ -17,15 +17,19 @@ const sendEmailWorker = new Worker('send-email', async (job: Job<SendEmailJobDat
     const { userId, to, subject, body, cc, bcc } = job.data;
     console.log(`Processing send-email job ${job.id} for user ${userId}`);
 
-    const account = await prisma.account.findFirst({
-        where: { userId },
-        rejectOnNotFound: true,
-    });
+    const accountResult = await db.query('SELECT * FROM "Account" WHERE "userId" = $1', [userId]);
+    if (accountResult.rows.length === 0) {
+        throw new Error(`Account not found for user ID: ${userId}`);
+    }
+    const account = accountResult.rows[0];
+    
+    const userResult = await db.query('SELECT name FROM "User" WHERE id = $1', [userId]);
+    const userName = userResult.rows.length > 0 ? userResult.rows[0].name : account.email;
 
     const password = CryptoService.decrypt(account.encryptedPassword, account.iv);
 
     const mailOptions = {
-        from: `"${(await prisma.user.findUnique({where: {id: userId}}))?.name}" <${account.email}>`,
+        from: `"${userName}" <${account.email}>`,
         to,
         cc,
         bcc,

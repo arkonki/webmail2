@@ -12,13 +12,13 @@ This is a full-stack webmail client featuring a modern React frontend and a powe
 - **Backend**:
     -   High-performance Fastify server written in TypeScript.
     -   **IMAP/SMTP Integration**: Uses `imapflow` for robust IMAP communication (including IDLE for push notifications) and `nodemailer` for SMTP.
-    -   **PostgreSQL Database**: Caches mailbox data for fast access using Prisma ORM.
+    -   **PostgreSQL Database**: Caches mailbox data for fast access using the `pg` driver.
     -   **Full-Text Search**: Leverages PostgreSQL's trigram indexing for efficient searching.
     -   **Background Jobs**: Uses Redis and BullMQ for handling long-running tasks like mailbox synchronization and sending emails.
     -   **Security**: Encrypts stored mail credentials (AES-GCM), uses JWT for session management, and sanitizes HTML content.
 - **Tooling**:
     -   **PM2**: Production process management for the server and workers.
-    -   **Prisma Migrations**: For easy database schema management.
+    -   **SQL Schema**: A `schema.sql` file defines the database structure.
     -   **OpenAPI/Swagger**: Automatic API documentation.
 
 ## 1. Prerequisites
@@ -27,7 +27,7 @@ Before you begin, ensure you have the following installed on your development ma
 
 -   **Node.js**: Version 18.x or later.
 -   **npm** (or yarn/pnpm).
--   **PostgreSQL**: A running PostgreSQL server.
+-   **PostgreSQL**: A running PostgreSQL server with the `psql` command-line tool available.
 -   **Redis**: A running Redis server.
 -   **Git**: For cloning the repository.
 -   **PM2** (for production):
@@ -71,14 +71,12 @@ Before you begin, ensure you have the following installed on your development ma
 
 ### Step 3: Set Up the Database
 
-1.  Run the Prisma migration command to create the necessary tables in your PostgreSQL database.
+1.  Make sure your PostgreSQL server is running and you have created a database for this application.
+2.  Run the `schema.sql` script to create all the necessary tables, functions, and indexes. Replace `USER`, `DATABASE`, etc., with your actual database details.
     ```bash
-    npm run prisma:migrate
+    psql -U YOUR_USER -d YOUR_DATABASE -f server/schema.sql
     ```
-2.  (Optional) Generate the Prisma client based on your schema. This is often done automatically by the migrate command.
-    ```bash
-    npm run prisma:generate
-    ```
+    You will be prompted for your PostgreSQL user's password.
 
 ### Step 4: Run the Application
 
@@ -123,14 +121,10 @@ This guide covers deploying on a Linux server (e.g., Ubuntu) with Apache as a re
     ```
     This compiles the React app into the `dist/` directory and the TypeScript server into the `server/dist/` directory.
 
-### Step 2: Configure Environment
+### Step 2: Configure Environment and Database
 
 -   Ensure your production server has the necessary environment variables set (either in `server/.env` or as system environment variables). **Use different, stronger secrets for production.**
--   Run database migrations against your production database:
-    ```bash
-    npm run prisma:migrate
-    ```
-    *Note: In production, you might use `prisma migrate deploy` instead of `dev`.*
+-   Set up your production database by running the `schema.sql` script as shown in the development setup section.
 
 ### Step 3: Run with PM2
 
