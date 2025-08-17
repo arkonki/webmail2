@@ -5,7 +5,6 @@ import websocketPlugin from './plugins/websocket';
 import authPlugin from './plugins/auth';
 import routes from './routes';
 import config from './config';
-import process from 'process';
 
 const server = Fastify({
   logger: {

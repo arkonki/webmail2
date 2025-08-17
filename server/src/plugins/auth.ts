@@ -2,7 +2,6 @@ import { FastifyInstance, FastifyPluginAsync, FastifyRequest, FastifyReply } fro
 import fp from 'fastify-plugin';
 import jwt from 'jsonwebtoken';
 import config from '../config';
-import 'fastify';
 
 declare module 'fastify' {
   interface FastifyRequest {

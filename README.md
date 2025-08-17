@@ -60,10 +60,9 @@ Before you begin, ensure you have the following installed on your development ma
         ```
         DATABASE_URL="postgresql://USER:PASSWORD@HOST:PORT/DATABASE?schema=public"
         ```
-    -   `REDIS_URL`: Your Redis connection string.
-        ```
-        REDIS_URL="redis://HOST:PORT"
-        ```
+    -   `REDIS_URL` or `REDIS_SOCKET_PATH`: Provide **one** of these for your Redis connection.
+        - For a network connection: `REDIS_URL="redis://HOST:PORT"`
+        - For a local Unix socket: `REDIS_SOCKET_PATH="/path/to/your/redis.sock"`
     -   `JWT_SECRET` & `ENCRYPTION_KEY`: Generate strong, unique secrets for these.
         ```bash
         # Run these in your terminal and copy the output
