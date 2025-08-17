@@ -13,23 +13,23 @@ async function websocketPlugin(server: FastifyInstance) {
   server.register(fastifyWebsocket);
 
   server.register(async function (fastify) {
-    fastify.get('/socket', { websocket: true }, (connection, req) => {
-      connection.socket.on('message', (message: any) => {
+    fastify.get('/socket', { websocket: true }, (socket, req) => {
+      socket.on('message', (message: any) => {
         try {
           const data = JSON.parse(message.toString());
           if (data.type === 'auth' && data.token) {
             const decoded = jwt.verify(data.token, config.JWT_SECRET) as { id: string };
-            clients.set(decoded.id, connection.socket);
+            clients.set(decoded.id, socket);
             fastify.log.info(`WebSocket client connected for user ${decoded.id}`);
             
-            connection.socket.on('close', () => {
+            socket.on('close', () => {
               clients.delete(decoded.id);
                fastify.log.info(`WebSocket client disconnected for user ${decoded.id}`);
             });
           }
         } catch (error) {
           fastify.log.error({ msg: 'WebSocket auth error', error });
-          connection.socket.close();
+          socket.close();
         }
       });
     });

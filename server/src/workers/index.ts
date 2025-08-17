@@ -1,6 +1,5 @@
 /// <reference types="node" />
 
-import { process } from 'node:process';
 import './send.worker';
 import './sync.worker';
 
