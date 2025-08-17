@@ -1,7 +1,7 @@
-
 import React, { createContext, useState, useContext, ReactNode, useMemo, useCallback, useEffect } from 'react';
 import { Email, ActionType, Label, Conversation, User, AppSettings, Signature, AutoResponder, Rule, SystemLabel, Contact, ContactGroup, SystemFolder, UserFolder, Attachment, FolderTreeNode, Identity, Template, DisplayDensity, AppLog, Mailbox } from '../types';
 import { useToast } from './ToastContext';
+import { mockAppSettings, mockContactGroups, mockContacts, mockEmails, mockLabels, mockMailboxes, mockUserFolders } from '../data/mockData';
 
 
 interface ComposeState {
@@ -206,37 +206,8 @@ const initialAppSettings: AppSettings = {
 
 const AppContext = createContext<AppContextType | undefined>(undefined);
 
-const fileToBase64 = (file: File): Promise<string> =>
-  new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.readAsDataURL(file);
-    reader.onload = () => {
-      const result = reader.result as string;
-      // remove the "data:*/*;base64," part
-      resolve(result.split(',')[1]);
-    };
-    reader.onerror = error => reject(error);
-  });
-
-const decodeJwtPayload = (token: string): { email: string; name: string } | null => {
-    try {
-        const base64Url = token.split('.')[1];
-        if (!base64Url) return null;
-        const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/');
-        const jsonPayload = decodeURIComponent(atob(base64).split('').map(function(c) {
-            return '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2);
-        }).join(''));
-        const decoded = JSON.parse(jsonPayload);
-        return { email: decoded.email, name: decoded.email.split('@')[0] };
-    } catch (e) {
-        console.error("Failed to decode JWT:", e);
-        return null;
-    }
-};
-
 export const AppContextProvider = ({ children }: { children: ReactNode }): React.ReactElement => {
   const [user, setUser] = useState<User | null>(null);
-  const [sessionToken, setSessionToken] = useState<string | null>(null);
   const [emails, setEmails] = useState<Email[]>([]);
   const [labels, setLabels] = useState<Label[]>([]);
   const [userFolders, setUserFolders] = useState<UserFolder[]>([]);
@@ -286,15 +257,6 @@ export const AppContextProvider = ({ children }: { children: ReactNode }): React
     };
     setAppLogs(prev => [newLog, ...prev.slice(0, 99)]); // Keep last 100 logs
   }, []);
-  
-  const getAuthHeaders = useCallback(() => {
-    if (!sessionToken) return null;
-    return {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${sessionToken}`
-    };
-  }, [sessionToken]);
-
 
   useEffect(() => {
     const handleOnline = () => setIsOnline(true);
@@ -307,73 +269,41 @@ export const AppContextProvider = ({ children }: { children: ReactNode }): React
     };
   }, []);
   useEffect(() => { if ('Notification' in window) setNotificationPermission(Notification.permission); }, []);
-  
-  // --- Data Persistence ---
-  useEffect(() => { if (user) try { localStorage.setItem(`${user.email}-appSettings`, JSON.stringify(appSettings)); } catch (e) { console.error('Failed to save appSettings', e); } }, [user, appSettings]);
-  useEffect(() => { if (user) try { localStorage.setItem(`${user.email}-emails`, JSON.stringify(emails)); } catch (e) { console.error('Failed to save emails', e); } }, [user, emails]);
-  useEffect(() => { if (user) try { localStorage.setItem(`${user.email}-contacts`, JSON.stringify(contacts)); } catch (e) { console.error('Failed to save contacts', e); } }, [user, contacts]);
-  useEffect(() => { if (user) try { localStorage.setItem(`${user.email}-contactGroups`, JSON.stringify(contactGroups)); } catch (e) { console.error('Failed to save contactGroups', e); } }, [user, contactGroups]);
-  useEffect(() => { if (user) try { localStorage.setItem(`${user.email}-labels`, JSON.stringify(labels)); } catch (e) { console.error('Failed to save labels', e); } }, [user, labels]);
-  useEffect(() => { if (user) try { localStorage.setItem(`${user.email}-mailboxes`, JSON.stringify(mailboxes)); } catch (e) { console.error('Failed to save mailboxes', e); } }, [user, mailboxes]);
-  useEffect(() => { if (user) try { localStorage.setItem(`${user.email}-userFolders`, JSON.stringify(userFolders)); } catch (e) { console.error('Failed to save userFolders', e); } }, [user, userFolders]);
-  useEffect(() => { if (user) try { localStorage.setItem(`${user.email}-sidebarSectionOrder`, JSON.stringify(sidebarSectionOrder)); } catch (e) { console.error('Failed to save sidebarSectionOrder', e); } }, [user, sidebarSectionOrder]);
-  useEffect(() => { if (user) try { localStorage.setItem(`${user.email}-isSetupComplete`, JSON.stringify(isSetupComplete)); } catch (e) { console.error('Failed to save isSetupComplete', e); } }, [user, isSetupComplete]);
-
 
   const checkUserSession = useCallback(() => {
     setIsLoading(true);
-    const savedToken = sessionStorage.getItem('sessionToken');
     const savedUserStr = localStorage.getItem('sessionUser');
 
-    if (savedToken && savedUserStr) {
-        const decodedUser = decodeJwtPayload(savedToken);
+    if (savedUserStr) {
         const sessionUser = JSON.parse(savedUserStr);
-        if (decodedUser && decodedUser.email === sessionUser.email) {
-            setSessionToken(savedToken);
-            setUser(sessionUser);
-            addAppLog(`Session restored for ${sessionUser.email}`);
+        setUser(sessionUser);
+        addAppLog(`Session restored for ${sessionUser.email}`);
 
-            const loadFromStorage = (key: string, setter: React.Dispatch<any>, defaultValue: any) => {
-                const savedData = localStorage.getItem(`${sessionUser.email}-${key}`);
-                setter(savedData ? JSON.parse(savedData) : defaultValue);
-            };
-            
-            const savedSettings = localStorage.getItem(`${sessionUser.email}-appSettings`);
-            const parsedSettings = savedSettings ? JSON.parse(savedSettings) : initialAppSettings;
-            const mergedSettings = { ...initialAppSettings, ...parsedSettings,
-                signature: { ...initialAppSettings.signature, ...parsedSettings.signature },
-                autoResponder: { ...initialAppSettings.autoResponder, ...parsedSettings.autoResponder },
-                sendDelay: { ...initialAppSettings.sendDelay, ...parsedSettings.sendDelay },
-                notifications: { ...initialAppSettings.notifications, ...parsedSettings.notifications },
-                folderMappings: { ...initialAppSettings.folderMappings, ...parsedSettings.folderMappings },
-            };
-            setAppSettings(mergedSettings);
-            loadFromStorage('emails', setEmails, []);
-            loadFromStorage('labels', setLabels, []);
-            loadFromStorage('mailboxes', setMailboxes, []);
-            loadFromStorage('userFolders', setUserFolders, []);
-            loadFromStorage('contacts', setContacts, []);
-            loadFromStorage('contactGroups', setContactGroups, []);
-            loadFromStorage('sidebarSectionOrder', setSidebarSectionOrder, ['folders', 'labels']);
-            setIsSetupComplete(localStorage.getItem(`${sessionUser.email}-isSetupComplete`) === 'true');
-        } else {
-            // Token-user mismatch, clear session
-            logout();
-        }
+        // Load mock data on session restore
+        setEmails(mockEmails);
+        setLabels(mockLabels);
+        setUserFolders(mockUserFolders);
+        setMailboxes(mockMailboxes);
+        setContacts(mockContacts);
+        setContactGroups(mockContactGroups);
+        
+        // Merge settings from mock data with initial settings
+        const mergedSettings = { ...initialAppSettings, ...mockAppSettings,
+            signature: { ...initialAppSettings.signature, ...mockAppSettings.signature },
+            autoResponder: { ...initialAppSettings.autoResponder, ...mockAppSettings.autoResponder },
+            sendDelay: { ...initialAppSettings.sendDelay, ...mockAppSettings.sendDelay },
+            notifications: { ...initialAppSettings.notifications, ...mockAppSettings.notifications },
+            folderMappings: { ...initialAppSettings.folderMappings, ...mockAppSettings.folderMappings },
+        };
+        setAppSettings(mergedSettings);
+        setIsSetupComplete(true);
     } else {
         setUser(null);
-        setSessionToken(null);
     }
     setTimeout(() => setIsLoading(false), 500);
   }, [addAppLog]);
 
   const getFolderPathFor = useCallback((folderType: 'sent' | 'drafts' | 'trash' | 'spam' | 'archive'): string => {
-      const mappedPath = appSettings.folderMappings[folderType];
-      if (mappedPath && mailboxes.some(m => m.path === mappedPath)) {
-        return mappedPath;
-      }
-  
-      // Fallback logic if mapping is invalid or not set
       const specialUseMap = { sent: '\\Sent', drafts: '\\Drafts', trash: '\\Trash', spam: '\\Junk', archive: '\\Archive' };
       const fallbackNameMap = { sent: 'Sent', drafts: 'Drafts', trash: 'Trash', spam: 'Spam', archive: 'Archive' };
       
@@ -386,85 +316,46 @@ export const AppContextProvider = ({ children }: { children: ReactNode }): React
       const mailboxByName = mailboxes.find(m => m.name.toLowerCase() === fallbackName.toLowerCase());
       if (mailboxByName) return mailboxByName.path;
       
-      // Final fallback to just the name, e.g. for folder creation
       return fallbackName;
-  }, [appSettings.folderMappings, mailboxes]);
+  }, [mailboxes]);
 
-  const login = useCallback(async (email: string, pass: string) => {
+ const login = useCallback(async (email: string, pass: string) => {
     setIsLoading(true);
-    addAppLog(`Attempting login for ${email}...`);
-    try {
-        const response = await fetch('/api/login', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ email, password: pass }),
-        });
-        const data = await response.json();
+    addAppLog(`Attempting dummy login for ${email}...`);
 
-        if (response.ok && data.success && data.token) {
-            addAppLog(`Login successful for ${email}.`);
-            
-            const newUser: User = { id: `user-${Date.now()}`, email, name: email.split('@')[0] };
-            
-            setEmails([]); setLabels([]); setUserFolders([]); setMailboxes([]);
-            setContacts([]); setContactGroups([]); setAppSettings(initialAppSettings);
-            setSidebarSectionOrder(['folders', 'labels']); setIsSetupComplete(false);
-            
-            setUser(newUser);
-            setSessionToken(data.token);
-            sessionStorage.setItem('sessionToken', data.token);
-            localStorage.setItem('sessionUser', JSON.stringify(newUser));
-            _setCurrentSelection({type: 'folder', id: 'INBOX'});
+    // Simulate network delay
+    await new Promise(res => setTimeout(res, 500));
 
-            const authHeaders = { 'Content-Type': 'application/json', 'Authorization': `Bearer ${data.token}` };
+    if (email && pass) {
+        addAppLog(`Dummy login successful for ${email}.`);
+        const newUser: User = { id: `user-${Date.now()}`, email, name: email.split('@')[0] };
 
-            // Sync folders first
-            addAppLog("Loading mail folders..."); addToast("Loading mail folders...");
-            try {
-                const foldersResponse = await fetch('/api/folders', { method: 'POST', headers: authHeaders });
-                const foldersData = await foldersResponse.json();
-                if (foldersResponse.ok && foldersData.success) {
-                    const fetchedMailboxes = foldersData.mailboxes as Mailbox[];
-                    setMailboxes(fetchedMailboxes);
-                    addAppLog(`Loaded ${fetchedMailboxes.length} mailboxes from server.`);
-                    const initialMappings: Record<string, string> = {};
-                    const systemFolderMap = { sent: { specialUse: '\\Sent', name: 'Sent' }, drafts: { specialUse: '\\Drafts', name: 'Drafts' }, trash: { specialUse: '\\Trash', name: 'Trash' }, spam: { specialUse: '\\Junk', name: 'Spam' }, archive: { specialUse: '\\Archive', name: 'Archive' } };
-                    fetchedMailboxes.forEach((m) => { for (const [k, v] of Object.entries(systemFolderMap)) { if (m.specialUse === v.specialUse) initialMappings[k] = m.path; } });
-                    for (const [k, v] of Object.entries(systemFolderMap)) { if (!initialMappings[k]) { const f = fetchedMailboxes.find((m) => m.name.toLowerCase() === v.name.toLowerCase()); if (f) initialMappings[k] = f.path; } }
-                    setAppSettings(prev => ({ ...prev, folderMappings: initialMappings }));
-                } else {
-                    addAppLog(`Mailbox loading failed: ${foldersData.message || "Unknown error"}`, 'error'); addToast(foldersData.message || "Failed to load mailboxes.", { duration: 5000 });
-                }
-            } catch (folderError: any) { addAppLog(`Mailbox loading request failed: ${folderError.message}`, 'error'); addToast("Failed to connect to the server for folder sync.", { duration: 5000 }); }
+        setUser(newUser);
+        localStorage.setItem('sessionUser', JSON.stringify(newUser));
 
-            // Then sync emails
-            setIsSyncing(true); addAppLog("Starting email sync with server..."); addToast("Syncing your inbox...");
-            try {
-                const syncResponse = await fetch('/api/sync', { method: 'POST', headers: authHeaders });
-                const syncData = await syncResponse.json();
-                if (syncResponse.ok && syncData.success) {
-                    setEmails(syncData.emails); addAppLog(`Sync complete. Synced ${syncData.emails.length} emails.`); addToast(`Synced ${syncData.emails.length} emails from Inbox.`, { duration: 4000 });
-                } else {
-                    addAppLog(`Email sync failed: ${syncData.message || "Unknown error"}`, 'error'); addToast(syncData.message || "Failed to sync emails.", { duration: 5000 });
-                }
-            } catch (syncError: any) {
-                console.error('Email sync request failed:', syncError); addAppLog(`Email sync request failed: ${syncError.message}`, 'error'); addToast("Failed to connect to the server for email sync.", { duration: 5000 });
-            } finally { setIsSyncing(false); }
-        } else {
-            addAppLog(`Login failed: ${data.message || "Invalid credentials."}`, 'error'); addToast(data.message || "Invalid credentials.", { duration: 5000 }); setUser(null);
-        }
-    } catch (error: any) {
-        console.error('Login request failed:', error); addAppLog(`Login request failed: ${error.message}`, 'error'); addToast("Failed to connect to the server. Please try again later.", { duration: 5000 }); setUser(null);
-    } finally { setIsLoading(false); }
-  }, [addToast, addAppLog]);
+        setEmails(mockEmails);
+        setLabels(mockLabels);
+        setUserFolders(mockUserFolders);
+        setMailboxes(mockMailboxes);
+        setContacts(mockContacts);
+        setContactGroups(mockContactGroups);
+        setAppSettings(mockAppSettings);
+        
+        setIsSetupComplete(true);
+        _setCurrentSelection({type: 'folder', id: SystemFolder.INBOX});
+        addToast(`Welcome, ${newUser.name}!`);
+    } else {
+        addToast("Please enter any email and password.", { duration: 5000 });
+    }
+    setIsLoading(false);
+}, [addToast, addAppLog]);
 
   const logout = useCallback(() => {
     addAppLog(`User ${user?.email} logged out.`);
     setUser(null);
-    setSessionToken(null);
     localStorage.removeItem('sessionUser');
-    sessionStorage.removeItem('sessionToken');
-    setEmails([]); setMailboxes([]);
+    setEmails([]); setMailboxes([]); setLabels([]); setUserFolders([]);
+    setContacts([]); setContactGroups([]); setAppSettings(initialAppSettings);
     _setCurrentSelection({type: 'folder', id: SystemFolder.INBOX});
     setSelectedConversationId(null);
     addToast("You have been logged out.");
@@ -565,9 +456,13 @@ export const AppContextProvider = ({ children }: { children: ReactNode }): React
             }
         });
     } else if (currentSelection.type === 'folder') {
-      const systemFolderKey = Object.entries(SystemFolder).find(([, value]) => value === currentSelection.id)?.[0].toLowerCase();
-      const folderPath = systemFolderKey ? getFolderPathFor(systemFolderKey as any) : currentSelection.id;
-      filtered = allConversations.filter(c => c.folderId === folderPath);
+      const systemFolderKey = Object.keys(SystemFolder).find(key => SystemFolder[key as keyof typeof SystemFolder] === currentSelection.id);
+      const folderPath = systemFolderKey ? getFolderPathFor(systemFolderKey.toLowerCase() as any) : currentSelection.id;
+      if (currentSelection.id === SystemFolder.INBOX) {
+          filtered = allConversations.filter(c => c.folderId === 'INBOX' || c.folderId === undefined);
+      } else {
+          filtered = allConversations.filter(c => c.folderId === folderPath);
+      }
     } else if (currentSelection.type === 'label') {
         if(currentSelection.id === SystemLabel.SNOOZED) {
             filtered = allConversations.filter(c => c.isSnoozed);
@@ -631,65 +526,52 @@ const flattenedFolderTree = useMemo<FolderTreeNode[]>(() => {
   }, [pendingSend, addToast]);
   
   const actuallySendEmail = useCallback(async (data: SendEmailData, draftId?: string) => {
-    const { to, cc, bcc, subject, body, attachments, scheduleDate } = data;
-    
-    const authHeaders = getAuthHeaders();
-    if (!user || !authHeaders) {
-        addToast("Cannot send email. User session is invalid. Please log out and log back in.", { duration: 5000 });
+    if (!user) {
+        addToast("Cannot send email. No user session.", { duration: 5000 });
         return;
     }
-    
+
+    if (data.scheduleDate) {
+        addToast("Message scheduled (mock).");
+        const scheduledEmail: Email = {
+            id: `email-${Date.now()}`, conversationId: composeState.conversationId || `conv-${Date.now()}`,
+            senderName: user.name, senderEmail: user.email, recipientEmail: data.to, cc: data.cc, bcc: data.bcc, subject: data.subject, body: data.body,
+            snippet: data.body.replace(/<[^>]*>?/gm, '').substring(0, 100), timestamp: new Date().toISOString(), isRead: true,
+            folderId: SystemFolder.SCHEDULED, labelIds: [],
+            attachments: data.attachments.map(f => ({fileName: f.name, fileSize: f.size, mimeType: f.type, url: URL.createObjectURL(f)})),
+            scheduledSendTime: data.scheduleDate.toISOString(),
+        };
+        setEmails(prev => { const existing = draftId ? prev.filter(e => e.id !== draftId) : prev; return [...existing, scheduledEmail]; });
+        return;
+    }
+
+    addToast("Message sent (mock).");
     const sentFolder = getFolderPathFor('sent');
+    
+    const newEmail: Email = {
+        id: `email-${Date.now()}`,
+        conversationId: composeState.conversationId || `conv-${Date.now()}`,
+        senderName: user.name,
+        senderEmail: user.email,
+        recipientEmail: data.to,
+        cc: data.cc,
+        bcc: data.bcc,
+        subject: data.subject,
+        body: data.body,
+        snippet: data.body.replace(/<[^>]*>?/gm, '').substring(0, 100),
+        timestamp: new Date().toISOString(),
+        isRead: true,
+        folderId: sentFolder,
+        labelIds: [],
+        attachments: data.attachments.map(f => ({fileName: f.name, fileSize: f.size, mimeType: f.type, url: URL.createObjectURL(f)})),
+    };
 
-    if (scheduleDate) {
-        addToast("Scheduling email...");
-        try {
-            const attachmentPayloads = await Promise.all(attachments.map(async (file) => ({ filename: file.name, contentType: file.type, content: await fileToBase64(file) })));
-            const response = await fetch('/api/schedule-send', {
-                method: 'POST', headers: authHeaders,
-                body: JSON.stringify({ from: `"${user.name}" <${user.email}>`, to, cc, bcc, subject, body, attachments: attachmentPayloads, scheduleDate: scheduleDate.toISOString(), sentFolder }),
-            });
-            const result = await response.json();
-            if (response.ok && result.success) {
-                const scheduledEmail: Email = {
-                    id: `email-${Date.now()}`, conversationId: composeState.conversationId || `conv-${Date.now()}`,
-                    senderName: user.name, senderEmail: user.email, recipientEmail: to, cc, bcc, subject, body,
-                    snippet: body.replace(/<[^>]*>?/gm, '').substring(0, 100), timestamp: new Date().toISOString(), isRead: true,
-                    folderId: SystemFolder.SCHEDULED, labelIds: [],
-                    attachments: attachments.map(f => ({fileName: f.name, fileSize: f.size, mimeType: f.type})),
-                    scheduledSendTime: scheduleDate.toISOString(), backendJobId: result.jobId,
-                };
-                setEmails(prev => { const existing = draftId ? prev.filter(e => e.id !== draftId) : prev; return [...existing, scheduledEmail]; });
-                addToast("Message scheduled.");
-            } else {
-                addToast(`Failed to schedule email: ${result.message || "Unknown server error"}`, { duration: 5000 });
-            }
-        } catch (error: any) { console.error('Failed to schedule email:', error); addToast(`Failed to schedule email: ${error.message}`, { duration: 5000 }); }
-        return;
-    }
+    setEmails(prev => {
+        const existing = draftId ? prev.filter(e => e.id !== draftId) : prev;
+        return [...existing, newEmail];
+    });
 
-    addToast("Sending email...");
-    try {
-        const attachmentPayloads = await Promise.all(attachments.map(async (file) => ({ filename: file.name, contentType: file.type, content: await fileToBase64(file) })));
-        const response = await fetch('/api/send', {
-            method: 'POST', headers: authHeaders,
-            body: JSON.stringify({ from: `"${user.name}" <${user.email}>`, to, cc, bcc, subject, body, attachments: attachmentPayloads, sentFolder }),
-        });
-        const result = await response.json();
-        if (response.ok && result.success && result.sentEmail) {
-            const serverSavedEmail = result.sentEmail;
-            setEmails(prev => {
-                const existing = draftId ? prev.filter(e => e.id !== draftId) : prev;
-                return [...existing, serverSavedEmail];
-            });
-            addToast("Message sent successfully.");
-        } else if (response.ok && result.success) {
-            addToast(result.message, { duration: 5000 });
-        } else {
-            addToast(`Failed to send email: ${result.message || "Unknown server error"}`, { duration: 5000 });
-        }
-    } catch (error: any) { console.error('Failed to send email:', error); addToast(`Failed to send email: ${error.message}`, { duration: 5000 }); }
-  }, [user, composeState.conversationId, addToast, getFolderPathFor, getAuthHeaders]);
+}, [user, composeState.conversationId, addToast, getFolderPathFor]);
   
   const saveDraft = useCallback((data: SendEmailData, draftId?: string): string => {
       const draft: Email = {

@@ -21,10 +21,10 @@ const Login: React.FC = () => {
             Webmail Client
           </h2>
           <p className="mt-2 text-sm text-gray-600 dark:text-gray-400">
-            IMAP / SMTP Mail Client
+            Offline Development Mode
           </p>
           <p className="mt-1 text-xs text-gray-500 dark:text-gray-500">
-            Connect to your IMAP account.
+            Enter any non-empty credentials to continue.
           </p>
         </div>
 
