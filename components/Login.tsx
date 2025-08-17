@@ -21,10 +21,7 @@ const Login: React.FC = () => {
             Webmail Client
           </h2>
           <p className="mt-2 text-sm text-gray-600 dark:text-gray-400">
-            Offline Development Mode
-          </p>
-          <p className="mt-1 text-xs text-gray-500 dark:text-gray-500">
-            Enter any non-empty credentials to continue.
+            Connect to your IMAP/SMTP account
           </p>
         </div>
 
@@ -66,7 +63,7 @@ const Login: React.FC = () => {
               disabled={isLoading}
               className="relative flex justify-center w-full px-4 py-2 text-sm font-medium text-white border border-transparent rounded-md group bg-primary hover:bg-primary-hover focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary disabled:bg-gray-400 dark:disabled:bg-gray-600"
             >
-              {isLoading ? "Signing in..." : "Sign in"}
+              {isLoading ? "Connecting..." : "Sign in"}
             </button>
           </div>
         </form>
