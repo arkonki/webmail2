@@ -64,7 +64,7 @@ const Header: React.FC = () => {
                 <span className="hidden md:inline">Offline</span>
             </div>
          )}
-         <button onClick={toggleTheme} className="p-2 rounded-full hover:bg-gray-200 dark:hover:bg-gray-700" title={theme === 'light' ? "Switch to dark mode" : "Switch to light mode"}>
+         <button onClick={toggleTheme} className="p-2 rounded-full hover:bg-gray-200 dark:hover:bg-gray-700" title={theme === 'light' ? 'Switch to dark mode' : 'Switch to light mode'}>
             {theme === 'light' ? <MoonIcon className="w-6 h-6 text-gray-600"/> : <SunIcon className="w-6 h-6 text-yellow-400"/>}
          </button>
          <button onClick={() => setIsShortcutsModalOpen(true)} className="p-2 rounded-full hover:bg-gray-200 dark:hover:bg-gray-700" title="Keyboard shortcuts (?)">

@@ -1,7 +1,9 @@
 /// <reference types="node" />
 
-import Fastify, { FastifyRequest, FastifyReply } from 'fastify';
+import Fastify from 'fastify';
+import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import cors from '@fastify/cors';
+import multipart from '@fastify/multipart';
 import swaggerPlugin from './plugins/swagger';
 import websocketPlugin from './plugins/websocket';
 import authPlugin from './plugins/auth';
@@ -38,6 +40,9 @@ async function main() {
     origin: '*', // Configure for production
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   });
+  
+  // For handling file uploads (attachments)
+  await server.register(multipart);
 
   await server.register(swaggerPlugin);
   await server.register(websocketPlugin);

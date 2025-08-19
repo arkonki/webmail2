@@ -191,18 +191,18 @@ const ComposeModal: React.FC = () => {
       return hasText || hasImages;
   };
   
-  const handleSaveAndClose = () => {
+  const handleSaveAndClose = async () => {
     if (to || cc || bcc || subject || bodyHasContent(body) || attachments.length > 0) {
-      const newDraftId = saveDraft({ to, cc, bcc, subject, body, attachments }, currentDraftId);
+      const newDraftId = await saveDraft({ to, cc, bcc, subject, body, attachments }, currentDraftId);
       setCurrentDraftId(newDraftId);
     } else if (currentDraftId) {
-      deleteDraft(currentDraftId);
+      await deleteDraft(currentDraftId);
     }
     closeCompose();
   };
 
-  const handleDiscard = () => {
-      if (currentDraftId) deleteDraft(currentDraftId);
+  const handleDiscard = async () => {
+      if (currentDraftId) await deleteDraft(currentDraftId);
       closeCompose();
   };
 
