@@ -4,6 +4,7 @@ import { MailAuthService } from '../services/mailAuth.service';
 import jwt from 'jsonwebtoken';
 import { config } from '../config';
 import { encrypt } from '../services/crypto.service';
+import '@fastify/cookie';
 
 const loginSchema = z.object({
   email: z.string().email(),
@@ -54,7 +55,7 @@ export async function authRoutes(fastify: FastifyInstance, options: FastifyPlugi
 
     } catch (error: any) {
         if (error instanceof z.ZodError) {
-            return reply.status(400).send({ message: 'Invalid request body', errors: error.errors });
+            return reply.status(400).send({ message: 'Invalid request body', errors: error.issues });
         }
       fastify.log.error(error);
       reply.status(500).send({ message: error.message || 'An error occurred during login.' });
