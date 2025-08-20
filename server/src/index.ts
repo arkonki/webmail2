@@ -1,63 +1,33 @@
 import Fastify from 'fastify';
-import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import cors from '@fastify/cors';
-import multipart from '@fastify/multipart';
-import swaggerPlugin from './plugins/swagger.js';
-import websocketPlugin from './plugins/websocket.js';
-import authPlugin from './plugins/auth.js';
-import routes from './routes/index.js';
-import config from './config.js';
-
-declare module 'fastify' {
-  interface FastifyInstance {
-    authenticate: (request: FastifyRequest, reply: FastifyReply) => Promise<void>;
-  }
-  interface FastifyRequest {
-    user: {
-      id: string;
-      email: string;
-    };
-  }
-}
+import cookie from '@fastify/cookie';
+import { authRoutes } from './routes/auth.routes';
+import { config } from './config';
 
 const server = Fastify({
-  logger: {
-    transport: {
-      target: 'pino-pretty',
-      options: {
-        translateTime: 'HH:MM:ss Z',
-        ignore: 'pid,hostname',
-      },
-    },
-  },
+  logger: true,
 });
 
-async function main() {
-  // Register Plugins
-  await server.register(cors, {
-    origin: '*', // Configure for production
-    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  });
-  
-  // For handling file uploads (attachments)
-  await server.register(multipart);
+// Register plugins
+server.register(cors, {
+    origin: 'http://localhost:5173', // Your frontend URL
+    credentials: true,
+});
 
-  await server.register(swaggerPlugin);
-  await server.register(websocketPlugin);
-  await server.register(authPlugin);
-  
-  // Register Routes
-  await server.register(routes, { prefix: '/api' });
+server.register(cookie);
 
-  // Start Server
+// Register routes
+server.register(authRoutes, { prefix: '/api/auth' });
+
+
+const start = async () => {
   try {
-    await server.listen({ port: config.PORT, host: config.HOST });
-    server.log.info(`Server listening on http://${config.HOST}:${config.PORT}`);
-    server.log.info(`Swagger docs at http://${config.HOST}:${config.PORT}/docs`);
+    await server.listen({ port: config.PORT, host: '0.0.0.0' });
+    server.log.info(`Server listening on port ${config.PORT}`);
   } catch (err) {
     server.log.error(err);
-    process.exit(1);
+    (process as any).exit(1);
   }
-}
+};
 
-main();
+start();

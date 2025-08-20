@@ -1,31 +1,82 @@
-import { FastifyInstance } from 'fastify';
+import { FastifyInstance, FastifyPluginOptions, FastifyReply, FastifyRequest } from 'fastify';
 import { z } from 'zod';
-import { AuthService } from '../services/auth.service.js';
+import { MailAuthService } from '../services/mailAuth.service';
+import jwt from 'jsonwebtoken';
+import { config } from '../config';
+import { encrypt } from '../services/crypto.service';
 
 const loginSchema = z.object({
   email: z.string().email(),
-  password: z.string().min(1),
-  imapHost: z.string().optional().default('mail.veebimajutus.ee'),
-  imapPort: z.number().optional().default(993),
-  smtpHost: z.string().optional().default('mail.veebimajutus.ee'),
-  smtpPort: z.number().optional().default(465),
+  password: z.string(),
+  imap: z.object({
+    host: z.string(),
+    port: z.number(),
+    secure: z.boolean(),
+  }),
+  smtp: z.object({
+    host: z.string(),
+    port: z.number(),
+    secure: z.boolean(),
+  }),
 });
 
-export default async function (server: FastifyInstance) {
-  server.post('/login', async (request, reply) => {
+export async function authRoutes(fastify: FastifyInstance, options: FastifyPluginOptions) {
+  fastify.post('/login', async (request: FastifyRequest, reply: FastifyReply) => {
     try {
-      const loginData = loginSchema.parse(request.body);
-      const result = await AuthService.login(loginData);
-      
-      reply.send(result);
+      const loginDetails = loginSchema.parse(request.body);
+
+      // Verify credentials by connecting to IMAP
+      const isValid = await MailAuthService.verifyCredentials(loginDetails.email, loginDetails.password, loginDetails.imap);
+
+      if (!isValid) {
+        return reply.status(401).send({ message: 'Invalid credentials or IMAP server settings.' });
+      }
+
+      // Encrypt credentials for the session
+      const encryptedCredentials = encrypt(JSON.stringify(loginDetails));
+
+      // Create JWT
+      const token = jwt.sign({ user: loginDetails.email, data: encryptedCredentials }, config.JWT_SECRET, {
+        expiresIn: '8h',
+      });
+
+      // Send JWT in a secure, httpOnly cookie
+      reply
+        .setCookie('token', token, {
+          httpOnly: true,
+          secure: config.NODE_ENV === 'production', // should be true in production
+          sameSite: 'strict',
+          path: '/',
+          maxAge: 8 * 60 * 60, // 8 hours
+        })
+        .status(200)
+        .send({ message: 'Login successful', user: { email: loginDetails.email, name: loginDetails.email.split('@')[0] } });
+
     } catch (error: any) {
-      server.log.error(error);
-      reply.code(401).send({ message: error.message || 'Login failed' });
+        if (error instanceof z.ZodError) {
+            return reply.status(400).send({ message: 'Invalid request body', errors: error.errors });
+        }
+      fastify.log.error(error);
+      reply.status(500).send({ message: error.message || 'An error occurred during login.' });
     }
   });
 
-  server.get('/verify', { preHandler: [server.authenticate] }, async (request, reply) => {
-    // If server.authenticate passes, the token is valid.
-    reply.send({ message: 'Token is valid', user: request.user });
+  fastify.post('/logout', async (request: FastifyRequest, reply: FastifyReply) => {
+      reply.clearCookie('token', { path: '/' }).status(200).send({ message: 'Logout successful' });
+  });
+
+   fastify.get('/session', async (request: FastifyRequest, reply: FastifyReply) => {
+    try {
+      const token = request.cookies.token;
+      if (!token) {
+        return reply.status(401).send({ message: 'Not authenticated' });
+      }
+
+      const decoded: any = jwt.verify(token, config.JWT_SECRET);
+      reply.status(200).send({ user: { email: decoded.user, name: decoded.user.split('@')[0] } });
+
+    } catch (error) {
+        reply.status(401).send({ message: 'Invalid or expired token' });
+    }
   });
 }

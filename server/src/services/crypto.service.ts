@@ -1,36 +1,26 @@
-import { Buffer } from 'node:buffer';
 import crypto from 'crypto';
-import config from '../config';
+import { config } from '../config';
+
+declare const Buffer: any;
 
 const ALGORITHM = 'aes-256-gcm';
 const IV_LENGTH = 16;
-const AUTH_TAG_LENGTH = 16;
-const KEY = Buffer.from(config.ENCRYPTION_KEY, 'hex');
+const KEY = Buffer.from(config.ENCRYPTION_KEY, 'utf-8');
 
-export class CryptoService {
-  public static encrypt(text: string) {
-    const iv = crypto.randomBytes(IV_LENGTH);
-    const cipher = crypto.createCipheriv(ALGORITHM, KEY, iv);
-    const encrypted = Buffer.concat([cipher.update(text, 'utf8'), cipher.final()]);
-    const authTag = cipher.getAuthTag();
-    
-    return {
-      iv: iv.toString('hex'),
-      encrypted: Buffer.concat([encrypted, authTag]).toString('hex'),
-    };
-  }
+export function encrypt(text: string): string {
+  const iv = crypto.randomBytes(IV_LENGTH);
+  const cipher = crypto.createCipheriv(ALGORITHM, KEY, iv);
+  const encrypted = Buffer.concat([cipher.update(text, 'utf8'), cipher.final()]);
+  const authTag = cipher.getAuthTag();
+  return Buffer.concat([iv, authTag, encrypted]).toString('hex');
+}
 
-  public static decrypt(encrypted: string, iv: string): string {
-    const ivBuffer = Buffer.from(iv, 'hex');
-    const encryptedBuffer = Buffer.from(encrypted, 'hex');
-
-    const authTag = encryptedBuffer.slice(-AUTH_TAG_LENGTH);
-    const encryptedText = encryptedBuffer.slice(0, -AUTH_TAG_LENGTH);
-
-    const decipher = crypto.createDecipheriv(ALGORITHM, KEY, ivBuffer);
-    decipher.setAuthTag(authTag);
-
-    const decrypted = Buffer.concat([decipher.update(encryptedText), decipher.final()]);
-    return decrypted.toString('utf8');
-  }
+export function decrypt(hash: string): string {
+  const buffer = Buffer.from(hash, 'hex');
+  const iv = buffer.slice(0, IV_LENGTH);
+  const authTag = buffer.slice(IV_LENGTH, IV_LENGTH * 2);
+  const encrypted = buffer.slice(IV_LENGTH * 2);
+  const decipher = crypto.createDecipheriv(ALGORITHM, KEY, iv);
+  decipher.setAuthTag(authTag);
+  return decipher.update(encrypted, 'hex', 'utf8') + decipher.final('utf8');
 }

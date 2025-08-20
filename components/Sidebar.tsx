@@ -1,4 +1,3 @@
-
 import React, { useState, useRef, useEffect } from 'react';
 import { useAppContext } from '../context/AppContext';
 import { PencilIcon } from './icons/PencilIcon';
@@ -51,19 +50,23 @@ interface NavItemProps {
   onDropItem?: (e: React.DragEvent) => void;
   onDragEndHandle?: (e: React.DragEvent) => void;
   onDragLeaveItem?: (e: React.DragEvent) => void;
+  isActionable?: boolean;
 }
 
 const NavItem: React.FC<NavItemProps> = (props) => {
   const { name, icon, isActive, onClick, isSidebarCollapsed, isEditable, onEdit, onDelete,
     isBeingDragged, isDropTarget, dropPosition,
-    onDragStartHandle, onDragEnterItem, onDragOverItem, onDropItem, onDragEndHandle, onDragLeaveItem } = props;
+    onDragStartHandle, onDragEnterItem, onDragOverItem, onDropItem, onDragEndHandle, onDragLeaveItem, isActionable } = props;
+  
+  const [isHovered, setIsHovered] = useState(false);
 
   const justifyContent = isSidebarCollapsed ? 'justify-center' : 'justify-start';
   const baseClasses = `group relative w-full flex items-center ${justifyContent} px-4 py-2 my-1 text-sm rounded-r-full cursor-pointer transition-all duration-200 ease-in-out`;
   const activeClasses = 'bg-primary text-white font-bold';
   const inactiveClasses = 'text-gray-700 dark:text-dark-on-surface hover:bg-gray-200 dark:hover:bg-dark-surface-container';
   const beingDraggedClasses = isBeingDragged ? 'opacity-40' : '';
-  const dropTargetClasses = isDropTarget ? 'bg-primary/20 dark:bg-primary/30 ring-2 ring-primary ring-inset' : '';
+  const showAsTarget = isDropTarget || (isActionable && isHovered && !isActive);
+  const dropTargetClasses = showAsTarget ? 'scale-105 bg-primary/20 dark:bg-primary/30 ring-2 ring-primary ring-inset' : '';
 
   return (
     <li
@@ -75,6 +78,8 @@ const NavItem: React.FC<NavItemProps> = (props) => {
       onDrop={onDropItem}
       onDragLeave={onDragLeaveItem}
       onDragEnd={onDragEndHandle}
+      onMouseEnter={() => setIsHovered(true)}
+      onMouseLeave={() => setIsHovered(false)}
     >
         {isDropTarget && !isSidebarCollapsed && dropPosition === 'top' && <div className="absolute top-0 left-4 right-0 h-0.5 bg-primary z-10" />}
         <div className="flex items-center flex-grow min-w-0">
@@ -108,7 +113,8 @@ const Sidebar: React.FC = () => {
   const { 
     currentSelection, setCurrentSelection, openCompose, labels, userFolders, folderTree, isSidebarCollapsed, 
     sidebarSectionOrder, reorderSidebarSections,
-    applyLabel, moveConversations, deleteFolder, view, reorderLabel, reorderFolder, isDraggingEmail
+    applyLabel, moveConversations, deleteFolder, view, reorderLabel, reorderFolder, isDraggingEmail,
+    selectedConversationIds, toggleLabel, setIsDraggingEmail
   } = useAppContext();
   const [isLabelModalOpen, setIsLabelModalOpen] = useState(false);
   const [editingLabel, setEditingLabel] = useState<Label | null>(null);
@@ -130,6 +136,26 @@ const Sidebar: React.FC = () => {
   useEffect(() => { localStorage.setItem('isLabelsCollapsed', String(isLabelsCollapsed)); }, [isLabelsCollapsed]);
   useEffect(() => { localStorage.setItem('isFoldersCollapsed', String(isFoldersCollapsed)); }, [isFoldersCollapsed]);
   useEffect(() => { localStorage.setItem('expandedFolders', JSON.stringify(Array.from(expandedFolders))); }, [expandedFolders]);
+
+  const hasSelection = selectedConversationIds.size > 0;
+
+  const handleFolderClick = (folderId: string) => {
+    const ids = Array.from(selectedConversationIds);
+    if (ids.length > 0) {
+      moveConversations(ids, folderId);
+    } else {
+      setCurrentSelection('folder', folderId);
+    }
+  };
+
+  const handleLabelClick = (labelId: string) => {
+    const ids = Array.from(selectedConversationIds);
+    if (ids.length > 0) {
+      toggleLabel(ids, labelId);
+    } else {
+      setCurrentSelection('label', labelId);
+    }
+  };
 
   const toggleFolderExpansion = (folderId: string) => {
     setExpandedFolders(prev => {
@@ -227,6 +253,7 @@ const Sidebar: React.FC = () => {
       // Second, check for email drop
       const convDataStr = e.dataTransfer.getData('application/json');
       if (convDataStr) {
+          setIsDraggingEmail(false);
           const convData = JSON.parse(convDataStr);
           if (convData.conversationIds) {
             if (dropTargetType === 'label' || dropTargetType === 'system-label') {
@@ -238,6 +265,7 @@ const Sidebar: React.FC = () => {
       }
     } catch (err) {
       console.error("Drop failed", err);
+      setIsDraggingEmail(false);
     }
   };
 
@@ -277,11 +305,12 @@ const Sidebar: React.FC = () => {
                 name={node.name}
                 icon={<FolderIcon className="w-5 h-5" />}
                 isActive={currentSelection.type === 'folder' && currentSelection.id === node.id && view === 'mail'}
-                onClick={() => setCurrentSelection('folder', node.id)}
+                onClick={() => handleFolderClick(node.id)}
                 isSidebarCollapsed={isSidebarCollapsed}
                 onEdit={() => handleOpenFolderModal(node)}
                 onDelete={() => handleDeleteFolder(node)}
                 isEditable
+                isActionable={hasSelection}
                 isBeingDragged={draggedItem?.type === 'folder' && draggedItem.id === node.id}
                 isDropTarget={dragOverItemId === node.id}
                 dropPosition={dragOverItemId === node.id ? dropPosition : null}
@@ -390,11 +419,12 @@ const Sidebar: React.FC = () => {
                     name={label.name}
                     icon={<TagIcon className="w-5 h-5" style={{color: label.color}} />}
                     isActive={currentSelection.type === 'label' && currentSelection.id === label.id && view === 'mail'}
-                    onClick={() => setCurrentSelection('label', label.id)}
+                    onClick={() => handleLabelClick(label.id)}
                     isSidebarCollapsed={isSidebarCollapsed}
                     onEdit={() => handleOpenLabelModal(label)}
                     onDelete={() => { /* Should be handled in settings */}}
                     isEditable
+                    isActionable={hasSelection}
                     isBeingDragged={draggedItem?.type === 'label' && draggedItem.id === label.id}
                     isDropTarget={dragOverItemId === label.id}
                     dropPosition={dragOverItemId === label.id ? dropPosition : null}
@@ -428,29 +458,36 @@ const Sidebar: React.FC = () => {
       <div className="flex-grow overflow-y-auto mt-2 pr-1">
         <nav>
           <ul>
-            {systemFolders.map((folder) => (
+            {systemFolders.map((folder) => {
+              const isMovableTarget = ![SystemFolder.DRAFTS, SystemFolder.SCHEDULED].includes(folder);
+              return (
               <NavItem
                 key={folder}
                 name={folder}
                 icon={getSystemFolderIcon(folder)}
                 isActive={currentSelection.type === 'folder' && currentSelection.id === folder && view === 'mail'}
-                onClick={() => setCurrentSelection('folder', folder)}
+                onClick={() => {
+                  if (hasSelection && !isMovableTarget) return;
+                  handleFolderClick(folder);
+                }}
                 isSidebarCollapsed={isSidebarCollapsed}
                 isDropTarget={dragOverItemId === folder}
+                isActionable={hasSelection && isMovableTarget}
                 onDropItem={(e) => handleDrop(e, 'system-folder', {id: folder})}
                 onDragEnterItem={(e) => handleDragEnter(e, folder)}
                 onDragOverItem={(e) => { if (isDraggingEmail) e.preventDefault(); }}
                 onDragLeaveItem={handleDragLeave}
               />
-            ))}
+            )})}
              <NavItem
                 key={SystemLabel.STARRED}
                 name={SystemLabel.STARRED}
                 icon={<StarIcon className="w-5 h-5" />}
                 isActive={currentSelection.type === 'label' && currentSelection.id === SystemLabel.STARRED && view === 'mail'}
-                onClick={() => setCurrentSelection('label', SystemLabel.STARRED)}
+                onClick={() => handleLabelClick(SystemLabel.STARRED)}
                 isSidebarCollapsed={isSidebarCollapsed}
                 isDropTarget={dragOverItemId === SystemLabel.STARRED}
+                isActionable={hasSelection}
                 onDropItem={(e) => handleDrop(e, 'system-label', {id: SystemLabel.STARRED})}
                 onDragEnterItem={(e) => handleDragEnter(e, SystemLabel.STARRED)}
                 onDragOverItem={(e) => { if (isDraggingEmail) e.preventDefault(); }}
