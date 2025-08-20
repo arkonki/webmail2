@@ -1,4 +1,4 @@
-import { FastifyInstance, FastifyPluginOptions, FastifyReply, FastifyRequest } from 'fastify';
+import { FastifyInstance, FastifyPluginOptions } from 'fastify';
 import { z } from 'zod';
 import { MailAuthService } from '../services/mailAuth.service';
 import jwt from 'jsonwebtoken';
@@ -21,7 +21,7 @@ const loginSchema = z.object({
 });
 
 export async function authRoutes(fastify: FastifyInstance, options: FastifyPluginOptions) {
-  fastify.post('/login', async (request: FastifyRequest, reply: FastifyReply) => {
+  fastify.post('/login', async (request, reply) => {
     try {
       const loginDetails = loginSchema.parse(request.body);
 
@@ -61,11 +61,11 @@ export async function authRoutes(fastify: FastifyInstance, options: FastifyPlugi
     }
   });
 
-  fastify.post('/logout', async (request: FastifyRequest, reply: FastifyReply) => {
+  fastify.post('/logout', async (request, reply) => {
       reply.clearCookie('token', { path: '/' }).status(200).send({ message: 'Logout successful' });
   });
 
-   fastify.get('/session', async (request: FastifyRequest, reply: FastifyReply) => {
+   fastify.get('/session', async (request, reply) => {
     try {
       const token = request.cookies.token;
       if (!token) {
