@@ -1,6 +1,6 @@
 import { FastifyInstance } from 'fastify';
 import { z } from 'zod';
-import { AuthService } from '../services/auth.service';
+import { AuthService } from '../services/auth.service.js';
 
 const loginSchema = z.object({
   email: z.string().email(),
@@ -16,6 +16,7 @@ export default async function (server: FastifyInstance) {
     try {
       const loginData = loginSchema.parse(request.body);
       const result = await AuthService.login(loginData);
+      
       reply.send(result);
     } catch (error: any) {
       server.log.error(error);

@@ -1,14 +1,13 @@
-/// <reference types="node" />
-
+import process from 'node:process';
 import Fastify from 'fastify';
 import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import cors from '@fastify/cors';
 import multipart from '@fastify/multipart';
-import swaggerPlugin from './plugins/swagger';
-import websocketPlugin from './plugins/websocket';
-import authPlugin from './plugins/auth';
-import routes from './routes';
-import config from './config';
+import swaggerPlugin from './plugins/swagger.js';
+import websocketPlugin from './plugins/websocket.js';
+import authPlugin from './plugins/auth.js';
+import routes from './routes/index.js';
+import config from './config.js';
 
 declare module 'fastify' {
   interface FastifyInstance {

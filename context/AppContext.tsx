@@ -17,13 +17,15 @@ const api = {
     }
     const res = await fetch(endpoint, options);
     if (!res.ok) {
-      let errorData;
-      try {
-        errorData = await res.json();
-      } catch (e) {
-        errorData = { message: await res.text() };
-      }
-      throw new Error(errorData.message || 'API request failed');
+        const responseText = await res.text();
+        let errorData;
+        try {
+            // Try to parse as JSON, but use the raw text if it fails
+            errorData = JSON.parse(responseText);
+        } catch (e) {
+            errorData = { message: responseText || 'API request failed' };
+        }
+        throw new Error(errorData.message);
     }
     if (res.status === 204) {
       return null;
@@ -841,7 +843,7 @@ export const AppContextProvider = ({ children }: { children: ReactNode }): React
   
   const completeFirstTimeSetup = useCallback(async (name: string, accountType: 'personal' | 'business') => {
       try {
-          await api.post('/api/setup/complete', { name, accountType });
+          await api.post('/api/settings/setup/complete', { name, accountType });
           const sessionUserStr = localStorage.getItem('sessionUser');
           if (sessionUserStr) setUser({ ...JSON.parse(sessionUserStr), name });
           await fetchData(user!.email);

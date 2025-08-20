@@ -1,7 +1,6 @@
-/// <reference types="node" />
-
-import './send.worker';
-import './sync.worker';
+import process from 'node:process';
+import './send.worker.js';
+import './sync.worker.js';
 
 console.log('Workers are running...');
 

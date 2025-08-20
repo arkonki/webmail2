@@ -2,6 +2,8 @@
 
 This is a full-stack webmail client featuring a modern React frontend and a powerful Node.js backend built with Fastify. It connects to any standard IMAP/SMTP mail server and provides a user experience similar to services like Gmail, with features like real-time updates, background job processing, and a local database cache for performance.
 
+**Note:** The core mail functionality (login, viewing folders/messages) is connected to a real PostgreSQL database. However, features like **Contacts, Labels, and most Settings** are currently implemented with a stateful **in-memory mock backend**. This means they are fully functional for a single session but will reset when the server restarts.
+
 ## Table of Contents
 
 - [Architecture Overview](#architecture-overview)
@@ -36,7 +38,6 @@ The application is a monolith but is structured into three distinct, cooperating
     -   High-performance Fastify server written in TypeScript.
     -   **IMAP/SMTP Integration**: Uses `imapflow` for robust IMAP communication (including IDLE for push notifications) and `nodemailer` for SMTP.
     -   **PostgreSQL Database**: Caches mailbox data for fast access using the `pg` driver.
-    -   **Full-Text Search**: Leverages PostgreSQL's trigram indexing for efficient searching.
     -   **Background Jobs**: Uses Redis and BullMQ for handling long-running tasks.
     -   **Security**: Encrypts stored mail credentials (AES-GCM), uses JWT for session management, and sanitizes HTML content.
 
@@ -96,12 +97,7 @@ npm install
 ### Step 3: Set Up the Database
 
 1.  Make sure your PostgreSQL server is running. Create a new database and user for the application.
-2.  Run the `schema.sql` script to create all necessary tables and functions.
-    ```bash
-    # Replace with your actual user and database name
-    psql -U your_user -d your_database -f server/schema.sql
-    ```
-    You will be prompted for your PostgreSQL user's password.
+2.  A database schema is not provided in this repository, but the application expects tables for `User`, `Account`, `Folder`, `Email`, and `Attachment`. You will need to create these manually. The login process will automatically create default folders for a new user.
 
 ### Step 4: Run the Application
 
@@ -177,10 +173,8 @@ This guide covers deploying on a fresh Ubuntu 22.04 server with Apache 2.4 as a 
         \q
         ```
 2.  **Initialize Database Schema**
-    -   As your regular user, run the schema script against the new database:
-        ```bash
-        psql -U webmail_user -d webmail -h localhost -f server/schema.sql
-        ```
+    -  You will need to manually create the required tables for `User`, `Account`, `Folder`, etc., as no schema script is provided.
+
 3.  **Verify Redis**
     -   Check that Redis is running: `sudo systemctl status redis-server`. It should be active. By default, it listens only on localhost, which is secure.
 

@@ -1,25 +1,38 @@
 import { FastifyInstance } from 'fastify';
-import db from '../lib/db';
+import db from '../lib/db.js';
+import { UserFolder, Mailbox } from '../../../types.js';
 
 export default async function (server: FastifyInstance) {
   
   server.get('/', { preHandler: [server.authenticate] }, async (request, reply) => {
-    // This is a simplified version. A real implementation would:
-    // 1. Fetch folders fresh from IMAP server using ImapService
-    // 2. Update the database with any new/renamed/deleted folders
-    // 3. Query the database to get counts and return the list.
-    const query = `
-      SELECT f.path, f.name, f."specialUse"
-      FROM "Folder" f
-      JOIN "Account" a ON f."accountId" = a.id
-      WHERE a."userId" = $1
-    `;
-    const { rows: folders } = await db.query(query, [request.user.id]);
+    try {
+        const accountResult = await db.query('SELECT id FROM "Account" WHERE "userId" = $1', [request.user.id]);
+        if (accountResult.rows.length === 0) {
+            return reply.code(404).send({ message: 'Account not found for user.' });
+        }
+        const accountId = accountResult.rows[0].id;
 
-    // In a real app, unread/total counts would be calculated here
-    const foldersWithStatus = folders.map(f => ({ ...f, unread: 0, total: 0, delimiter: '/' }));
+        // In a real sync-based app, this would be more complex, fetching from IMAP first.
+        // For now, we return what's in our DB.
+        const mailboxesResult = await db.query('SELECT path, name, "specialUse", delimiter FROM "Folder" WHERE "accountId" = $1', [accountId]);
+        
+        // This app's frontend differentiates between mailboxes (from IMAP) and user-created folders.
+        // For this implementation, we'll treat them as the same.
+        const userFolders: UserFolder[] = mailboxesResult.rows.map((r, index) => ({
+            id: r.path, // Use path as ID for simplicity
+            name: r.name,
+            order: index,
+        }));
+        
+        const mailboxes: Mailbox[] = mailboxesResult.rows;
 
-    return { folders: foldersWithStatus };
+        return { userFolders, mailboxes };
+
+    } catch (error: any) {
+        server.log.error(`Failed to fetch folders for user ${request.user.id}:`, error);
+        reply.code(500).send({ message: 'Failed to retrieve folders.' });
+        return;
+    }
   });
 
 }
