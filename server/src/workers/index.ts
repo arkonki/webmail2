@@ -1,4 +1,3 @@
-import process from 'node:process';
 import './send.worker.js';
 import './sync.worker.js';
 

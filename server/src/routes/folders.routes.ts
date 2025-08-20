@@ -1,6 +1,6 @@
 import { FastifyInstance } from 'fastify';
 import db from '../lib/db.js';
-import { UserFolder, Mailbox } from '../../../types.js';
+import { UserFolder, Mailbox } from '../types.js';
 
 export default async function (server: FastifyInstance) {
   
@@ -24,7 +24,7 @@ export default async function (server: FastifyInstance) {
             order: index,
         }));
         
-        const mailboxes: Mailbox[] = mailboxesResult.rows;
+        const mailboxes: Mailbox[] = mailboxesResult.rows as Mailbox[];
 
         return { userFolders, mailboxes };
 

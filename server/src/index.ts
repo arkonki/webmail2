@@ -1,4 +1,3 @@
-import process from 'node:process';
 import Fastify from 'fastify';
 import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import cors from '@fastify/cors';

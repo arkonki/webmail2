@@ -4,7 +4,7 @@ import { CryptoService } from './crypto.service.js';
 import { ImapService } from './imap.service.js';
 import { SmtpService } from './smtp.service.js';
 import config from '../config.js';
-import { SystemFolder } from '../../../types.js';
+import { SystemFolder } from '../types.js';
 
 interface LoginData {
     email: string;
