@@ -1,3 +1,4 @@
+
 import { ImapFlow, ImapFlowOptions, MailboxObject } from 'imapflow';
 import { simpleParser, ParsedMail, AddressObject } from 'mailparser';
 import { Email, Attachment } from '../../../types';
@@ -21,26 +22,35 @@ export class ImapService {
     await this.client.logout();
   }
 
-  async listMailboxes() {
+  async listMailboxes(): Promise<MailboxObject[]> {
     await this.connect();
     const mailboxes = await this.client.listTree();
     await this.disconnect();
-    return mailboxes.children;
+    return mailboxes;
   }
 
   async fetchMessages(mailboxPath: string): Promise<Email[]> {
     await this.connect();
     const emails: Email[] = [];
 
-    const getFirstAddress = (headerValue: ParsedMail['from'] | ParsedMail['to']): AddressObject | undefined => {
+    const getFirstAddress = (headerValue: ParsedMail['from'] | ParsedMail['to']): { name: string; address?: string; } | undefined => {
         if (!headerValue) {
             return undefined;
         }
-        // This handles both HeaderValueWithAddresses ({ value: Address[] }) and Address[]
         const addresses = 'value' in headerValue ? headerValue.value : headerValue;
         if (Array.isArray(addresses) && addresses.length > 0) {
-            // Can be AddressObject or GroupObject, we'll just take the first.
-            return addresses[0] as AddressObject;
+            let first = addresses[0];
+            
+            const resolveAddress = (addr: AddressObject): { name: string; address?: string; } | undefined => {
+                if ('group' in addr && addr.group && addr.group.length > 0) {
+                    return resolveAddress(addr.group[0]);
+                }
+                if ('address' in addr) {
+                    return addr;
+                }
+                return undefined;
+            }
+            return resolveAddress(first);
         }
         return undefined;
     };
@@ -109,7 +119,7 @@ export class ImapService {
         console.error(`Error fetching messages from ${mailboxPath}:`, err);
         // Ensure we disconnect even if there's an error
     } finally {
-        if (this.client.connected) {
+        if (this.client.state !== 'logout') {
             await this.disconnect();
         }
     }
