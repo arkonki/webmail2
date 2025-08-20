@@ -1,7 +1,7 @@
 import React, { createContext, useState, useContext, ReactNode, useMemo, useCallback, useEffect } from 'react';
 import { Email, ActionType, Label, Conversation, User, AppSettings, Signature, AutoResponder, Rule, SystemLabel, Contact, ContactGroup, SystemFolder, UserFolder, Attachment, FolderTreeNode, Identity, Template, DisplayDensity, AppLog, Mailbox } from '../types';
 import { useToast } from './ToastContext';
-import { mockUser, mockEmails, mockLabels, mockUserFolders, mockContacts, mockContactGroups, initialAppSettings as mockAppSettings, mockMailboxes } from '../data/mockData';
+import { mockUser, mockLabels, mockContacts, mockContactGroups, initialAppSettings as mockAppSettings } from '../data/mockData';
 
 const generateId = () => Date.now().toString(36) + Math.random().toString(36).substring(2);
 
@@ -14,25 +14,12 @@ function usePersistedState<T>(key: string, defaultValue: T): [T, React.Dispatch<
     } catch (error) {
       console.error(`Error reading localStorage key “${key}”:`, error);
     }
-    // If it's an array and it's empty in local storage, use the default
-    if (Array.isArray(defaultValue) && defaultValue.length > 0) {
-        return defaultValue;
-    }
-    const fromSession = sessionStorage.getItem(key);
-     if (fromSession) {
-        try {
-            return JSON.parse(fromSession);
-        } catch (error) {
-            console.error(`Error reading sessionStorage key “${key}”:`, error);
-        }
-    }
     return defaultValue;
   });
 
   useEffect(() => {
     try {
       localStorage.setItem(key, JSON.stringify(state));
-      sessionStorage.removeItem(key);
     } catch (error) {
       console.error(`Error setting localStorage key “${key}”:`, error);
     }
@@ -229,10 +216,10 @@ const AppContext = createContext<AppContextType | undefined>(undefined);
 
 export const AppContextProvider = ({ children }: { children: ReactNode }): React.ReactElement => {
   const [user, setUser] = usePersistedState<User | null>('user', null);
-  const [emails, setEmails] = usePersistedState<Email[]>('emails', mockEmails);
-  const [labels, setLabels] = usePersistedState<Label[]>('labels', mockLabels);
-  const [userFolders, setUserFolders] = usePersistedState<UserFolder[]>('userFolders', mockUserFolders);
-  const [mailboxes, setMailboxes] = usePersistedState<Mailbox[]>('mailboxes', mockMailboxes);
+  const [emails, setEmails] = useState<Email[]>([]);
+  const [labels, setLabels] = useState<Label[]>(mockLabels); // Labels are mock for now
+  const [userFolders, setUserFolders] = useState<UserFolder[]>([]);
+  const [mailboxes, setMailboxes] = useState<Mailbox[]>([]);
   const [contacts, setContacts] = usePersistedState<Contact[]>('contacts', mockContacts);
   const [contactGroups, setContactGroups] = usePersistedState<ContactGroup[]>('contactGroups', mockContactGroups);
   const [currentSelection, _setCurrentSelection] = useState<{type: SelectionType, id: string}>({type: 'folder', id: SystemFolder.INBOX});
@@ -262,54 +249,73 @@ export const AppContextProvider = ({ children }: { children: ReactNode }): React
   const [isOnline, setIsOnline] = useState(navigator.onLine);
   const [isDraggingEmail, setIsDraggingEmail] = useState(false);
   const [appLogs, setAppLogs] = usePersistedState<AppLog[]>('appLogs', []);
+  const [isInitialSyncComplete, setIsInitialSyncComplete] = useState(false);
 
   const addAppLog = useCallback((message: string, level: 'info' | 'error' = 'info') => {
     const newLog: AppLog = { timestamp: new Date().toISOString(), message, level };
     setAppLogs(prev => [newLog, ...prev.slice(0, 99)]);
   }, [setAppLogs]);
   
-  const logout = useCallback(() => {
+  const syncMailData = useCallback(async () => {
+    if (!user) return;
+    setIsSyncing(true);
+    addAppLog("Starting mail sync...");
+    try {
+        // Fetch mailboxes and folders
+        const mailboxesRes = await fetch('/api/mail/mailboxes');
+        if (!mailboxesRes.ok) throw new Error('Failed to fetch mailboxes');
+        const { mailboxes, userFolders } = await mailboxesRes.json();
+        setMailboxes(mailboxes);
+        setUserFolders(userFolders);
+        addAppLog(`Fetched ${mailboxes.length} mailboxes.`);
+
+        // Fetch initial messages for Inbox
+        const messagesRes = await fetch(`/api/mail/messages?mailbox=${encodeURIComponent(SystemFolder.INBOX)}`);
+        if (!messagesRes.ok) throw new Error('Failed to fetch messages');
+        const emails = await messagesRes.json();
+        setEmails(emails);
+        addAppLog(`Fetched ${emails.length} messages for Inbox.`);
+        
+        setIsInitialSyncComplete(true);
+    } catch (error: any) {
+        addToast(`Sync failed: ${error.message}`, { duration: 5000 });
+        addAppLog(`Sync failed: ${error.message}`, 'error');
+    } finally {
+        setIsSyncing(false);
+    }
+  }, [user, addAppLog, addToast]);
+
+  const logout = useCallback(async () => {
+    await fetch('/api/auth/logout', { method: 'POST' });
     addAppLog(`User ${user?.email} logged out.`);
     setUser(null);
-    localStorage.removeItem('user');
+    setEmails([]);
+    setMailboxes([]);
+    setUserFolders([]);
+    setIsInitialSyncComplete(false);
     addToast("You have been logged out.");
   }, [addToast, user, addAppLog, setUser]);
   
   const checkUserSession = useCallback(async () => {
     setIsLoading(true);
-    // In a real app, you'd verify a token. Here we just check if the user object exists.
-    const sessionUserStr = localStorage.getItem('user');
-    if (sessionUserStr) {
-      setUser(JSON.parse(sessionUserStr));
+    try {
+        const response = await fetch('/api/auth/session');
+        if (response.ok) {
+            const { user } = await response.json();
+            setUser(user);
+            if (!isInitialSyncComplete) {
+                syncMailData();
+            }
+        } else {
+            setUser(null);
+        }
+    } catch (error) {
+        setUser(null);
+    } finally {
+        setIsLoading(false);
     }
-    setIsLoading(false);
-  }, [setUser]);
+  }, [setUser, syncMailData, isInitialSyncComplete]);
   
-  // Simulate new email arrival
-  useEffect(() => {
-    if(!user) return;
-    const interval = setInterval(() => {
-        const newEmail = {
-            id: generateId(),
-            conversationId: `conv-${generateId()}`,
-            senderName: 'Automated System',
-            senderEmail: 'system@example.com',
-            recipientEmail: user.email,
-            subject: 'System Health Check',
-            body: `<div><p>System is running normally at ${new Date().toLocaleTimeString()}.</p></div>`,
-            snippet: 'System is running normally...',
-            timestamp: new Date().toISOString(),
-            isRead: false,
-            folderId: SystemFolder.INBOX,
-            labelIds: [],
-        };
-        setEmails(prev => [newEmail, ...prev]);
-        addToast(`New email from ${newEmail.senderName}`);
-        addAppLog(`New email received: ${newEmail.subject}`);
-    }, 1000 * 60 * 5); // every 5 minutes
-    return () => clearInterval(interval);
-  }, [user, setEmails, addToast, addAppLog]);
-
 
   const login = useCallback(async (data: LoginData) => {
     setIsLoading(true);
@@ -328,6 +334,7 @@ export const AppContextProvider = ({ children }: { children: ReactNode }): React
         setIsSetupComplete(localStorage.getItem('isSetupComplete') === 'true');
         addToast(`Welcome back!`);
         addAppLog(`Login successful for ${data.email}.`);
+        await syncMailData(); // Sync mail data after successful login
     } catch (err: any) {
         addToast(`Login failed: ${err.message}`, { duration: 5000 });
         addAppLog(`Login failed: ${err.message}`, 'error');
@@ -335,7 +342,7 @@ export const AppContextProvider = ({ children }: { children: ReactNode }): React
     } finally {
         setIsLoading(false);
     }
-  }, [addToast, addAppLog, setUser, setIsSetupComplete]);
+  }, [addToast, addAppLog, setUser, setIsSetupComplete, syncMailData]);
   
   const deselectAllConversations = useCallback(() => setSelectedConversationIds(new Set()), []);
 
@@ -343,9 +350,26 @@ export const AppContextProvider = ({ children }: { children: ReactNode }): React
     _setCurrentSelection({ type, id });
     setSelectedConversationId(null);
     deselectAllConversations();
-    // No API call needed, filtering is handled in useMemo
-    addAppLog(`Navigated to ${type}: ${id}`);
-  }, [addAppLog, deselectAllConversations]);
+    
+    if (type === 'folder') {
+        setIsSyncing(true);
+        addAppLog(`Fetching messages for folder: ${id}`);
+        try {
+            const res = await fetch(`/api/mail/messages?mailbox=${encodeURIComponent(id)}`);
+            if (!res.ok) throw new Error('Failed to fetch messages for folder.');
+            const newEmails = await res.json();
+            setEmails(newEmails);
+            addAppLog(`Fetched ${newEmails.length} messages.`);
+        } catch (error: any) {
+            addToast(`Error: ${error.message}`, { duration: 5000 });
+            addAppLog(`Failed to fetch messages: ${error.message}`, 'error');
+        } finally {
+            setIsSyncing(false);
+        }
+    } else {
+        addAppLog(`Navigated to ${type}: ${id}`);
+    }
+  }, [addAppLog, addToast, deselectAllConversations]);
   
   // --- Data Transformation ---
   const allConversations = useMemo<Conversation[]>(() => {
@@ -381,7 +405,8 @@ export const AppContextProvider = ({ children }: { children: ReactNode }): React
 
     // Filter by selection (folder/label)
     if (currentSelection.type === 'folder') {
-      filtered = filtered.filter(c => c.folderId === currentSelection.id);
+      // Emails are already filtered by folder from the API call in setCurrentSelection
+      filtered = allConversations;
     } else if (currentSelection.type === 'label') {
       filtered = filtered.filter(c => c.labelIds.includes(currentSelection.id));
     }
@@ -416,82 +441,30 @@ export const AppContextProvider = ({ children }: { children: ReactNode }): React
   const toggleMinimizeCompose = useCallback(() => setComposeState(prev => ({ ...prev, isMinimized: !prev.isMinimized })), []);
   
   const sendEmail = useCallback(async (data: SendEmailData, draftId?: string) => {
-      const sentFolder = getFolderPathFor('sent');
-      const newEmail: Email = {
-        id: generateId(),
-        conversationId: `conv-${generateId()}`,
-        senderName: user!.name,
-        senderEmail: user!.email,
-        recipientEmail: data.to,
-        cc: data.cc,
-        bcc: data.bcc,
-        subject: data.subject,
-        body: data.body,
-        snippet: data.body.replace(/<[^>]+>/g, '').substring(0, 100),
-        timestamp: new Date().toISOString(),
-        isRead: true,
-        folderId: data.scheduleDate ? SystemFolder.SCHEDULED : sentFolder,
-        labelIds: [],
-        attachments: data.attachments.map(f => ({ fileName: f.name, fileSize: f.size, mimeType: f.type })),
-        scheduledSendTime: data.scheduleDate?.toISOString(),
-      };
-      
-      let updatedEmails = [...emails, newEmail];
-      if (draftId) {
-          updatedEmails = updatedEmails.filter(e => e.id !== draftId);
-      }
-      setEmails(updatedEmails);
-      
+      // This will be replaced with an API call
+      console.log("Sending email (mock):", data);
       addToast(data.scheduleDate ? "Message scheduled." : "Message sent.");
       closeCompose();
-  }, [addToast, closeCompose, user, emails, setEmails, getFolderPathFor]);
+  }, [addToast, closeCompose]);
 
   const saveDraft = useCallback(async (data: SendEmailData, draftId?: string): Promise<string> => {
-    let newDraftId = draftId || generateId();
-    const draftsFolder = getFolderPathFor('drafts');
-    const draftEmail: Email = {
-        id: newDraftId,
-        conversationId: `conv-${newDraftId}`,
-        senderName: user!.name,
-        senderEmail: user!.email,
-        recipientEmail: data.to,
-        cc: data.cc,
-        bcc: data.bcc,
-        subject: data.subject,
-        body: data.body,
-        snippet: data.body.replace(/<[^>]+>/g, '').substring(0, 100),
-        timestamp: new Date().toISOString(),
-        isRead: true,
-        folderId: draftsFolder,
-        labelIds: [],
-        attachments: data.attachments.map(f => ({ fileName: f.name, fileSize: f.size, mimeType: f.type }))
-    };
-    
-    setEmails(prev => {
-        const existing = prev.find(e => e.id === newDraftId);
-        if (existing) {
-            return prev.map(e => e.id === newDraftId ? draftEmail : e);
-        }
-        return [draftEmail, ...prev];
-    });
+    // This will be replaced with an API call
+    const newDraftId = draftId || generateId();
+    console.log("Saving draft (mock):", newDraftId, data);
     addToast('Draft saved.');
     return newDraftId;
-  }, [addToast, user, setEmails, getFolderPathFor]);
+  }, [addToast]);
 
   const deleteDraft = useCallback(async (draftId: string) => {
     if (!draftId) return;
-    setEmails(prev => prev.filter(e => e.id !== draftId));
+    // This will be replaced with an API call
+    console.log("Deleting draft (mock):", draftId);
     addToast('Draft discarded.');
-  }, [addToast, setEmails]);
+  }, [addToast]);
   
-  // --- Mail Actions ---
+  // --- Mail Actions (MOCKED for now) ---
   const moveConversations = useCallback(async (conversationIds: string[], targetFolderId: string) => {
-    setEmails(prev => prev.map(e => {
-        if (conversationIds.includes(e.conversationId)) {
-            return { ...e, folderId: targetFolderId };
-        }
-        return e;
-    }));
+    setEmails(prev => prev.filter(e => !conversationIds.includes(e.conversationId)));
     if (selectedConversationId && conversationIds.includes(selectedConversationId)) {
         setSelectedConversationId(null);
     }
@@ -537,14 +510,8 @@ export const AppContextProvider = ({ children }: { children: ReactNode }): React
   
   const archiveConversation = useCallback(async (conversationIds: string[]) => {
     const archiveFolderId = getFolderPathFor('archive');
-    if (archiveFolderId) {
-        moveConversations(conversationIds, archiveFolderId);
-    } else {
-        // Fallback for mock data if Archive isn't standard
-        setEmails(prev => prev.filter(e => !conversationIds.includes(e.conversationId)))
-        addToast('Archived. (Note: No archive folder configured, removed from view)');
-    }
-  }, [moveConversations, getFolderPathFor, addToast, setEmails]);
+    moveConversations(conversationIds, archiveFolderId || SystemFolder.ARCHIVE);
+  }, [moveConversations, getFolderPathFor]);
 
   const markAsRead = useCallback((conversationId: string) => {
     setEmails(prev => prev.map(e => e.conversationId === conversationId ? { ...e, isRead: true } : e));

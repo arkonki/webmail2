@@ -1,8 +1,11 @@
 import Fastify from 'fastify';
 import cors from '@fastify/cors';
 import cookie from '@fastify/cookie';
+import jwt from '@fastify/jwt';
 import { authRoutes } from './routes/auth.routes';
+import { mailRoutes } from './routes/mail.routes';
 import { config } from './config';
+import { authPlugin } from './plugins/auth';
 
 const server = Fastify({
   logger: true,
@@ -15,9 +18,12 @@ server.register(cors, {
 });
 
 server.register(cookie);
+server.register(jwt, { secret: config.JWT_SECRET });
+server.register(authPlugin);
 
 // Register routes
 server.register(authRoutes, { prefix: '/api/auth' });
+server.register(mailRoutes, { prefix: '/api/mail' });
 
 
 const start = async () => {
