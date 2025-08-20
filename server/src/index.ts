@@ -18,7 +18,13 @@ server.register(cors, {
 });
 
 server.register(cookie);
-server.register(jwt, { secret: config.JWT_SECRET });
+server.register(jwt, { 
+    secret: config.JWT_SECRET,
+    cookie: {
+        cookieName: 'token',
+        signed: false, // JWT is already signed
+    }
+});
 server.register(authPlugin);
 
 // Register routes

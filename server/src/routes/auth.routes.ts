@@ -1,7 +1,6 @@
 import { FastifyInstance, FastifyPluginOptions } from 'fastify';
 import { z } from 'zod';
 import { MailAuthService } from '../services/mailAuth.service';
-import jwt from 'jsonwebtoken';
 import { config } from '../config';
 import { encrypt } from '../services/crypto.service';
 import '@fastify/cookie';
@@ -36,8 +35,8 @@ export async function authRoutes(fastify: FastifyInstance, options: FastifyPlugi
       // Encrypt credentials for the session
       const encryptedCredentials = encrypt(JSON.stringify(loginDetails));
 
-      // Create JWT
-      const token = jwt.sign({ user: loginDetails.email, data: encryptedCredentials }, config.JWT_SECRET, {
+      // Create JWT using the fastify-jwt decorator
+      const token = fastify.jwt.sign({ user: loginDetails.email, data: encryptedCredentials }, {
         expiresIn: '8h',
       });
 
@@ -73,7 +72,8 @@ export async function authRoutes(fastify: FastifyInstance, options: FastifyPlugi
         return reply.status(401).send({ message: 'Not authenticated' });
       }
 
-      const decoded: any = jwt.verify(token, config.JWT_SECRET);
+      // Verify token using the fastify-jwt decorator
+      const decoded: any = fastify.jwt.verify(token);
       reply.status(200).send({ user: { email: decoded.user, name: decoded.user.split('@')[0] } });
 
     } catch (error) {

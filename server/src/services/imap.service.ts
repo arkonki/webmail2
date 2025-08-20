@@ -1,5 +1,5 @@
-import { ImapFlow, ImapFlowOptions } from 'imapflow';
-import { simpleParser, ParsedMail } from 'mailparser';
+import { ImapFlow, ImapFlowOptions, MailboxObject } from 'imapflow';
+import { simpleParser, ParsedMail, AddressObject } from 'mailparser';
 import { Email, Attachment } from '../../../types';
 
 export class ImapService {
@@ -32,8 +32,27 @@ export class ImapService {
     await this.connect();
     const emails: Email[] = [];
 
+    const getFirstAddress = (headerValue: ParsedMail['from'] | ParsedMail['to']): AddressObject | undefined => {
+        if (!headerValue) {
+            return undefined;
+        }
+        // This handles both HeaderValueWithAddresses ({ value: Address[] }) and Address[]
+        const addresses = 'value' in headerValue ? headerValue.value : headerValue;
+        if (Array.isArray(addresses) && addresses.length > 0) {
+            // Can be AddressObject or GroupObject, we'll just take the first.
+            return addresses[0] as AddressObject;
+        }
+        return undefined;
+    };
+
     try {
         const lock = await this.client.getMailboxLock(mailboxPath);
+        
+        if (!this.client.mailbox) {
+            lock.release();
+            await this.disconnect();
+            throw new Error(`Failed to open mailbox: ${mailboxPath}`);
+        }
         
         const messageCount = this.client.mailbox.exists;
         if (messageCount === 0) {
@@ -49,10 +68,10 @@ export class ImapService {
             try {
                 const parsedMail: ParsedMail = await simpleParser(msg.source);
                 
-                const from = parsedMail.from?.value[0];
-                const to = parsedMail.to?.value[0];
+                const from = getFirstAddress(parsedMail.from);
+                const to = getFirstAddress(parsedMail.to);
                 
-                if (!from || !to) continue; // Skip if essential fields are missing
+                if (!from || !to || !from.address || !to.address) continue; // Skip if essential fields are missing
                 
                 const attachments: Attachment[] = parsedMail.attachments?.map(att => ({
                     fileName: att.filename || 'attachment',
@@ -67,8 +86,8 @@ export class ImapService {
                     id: msg.uid.toString(),
                     conversationId: 'conv-' + Buffer.from(parsedMail.subject || '(no subject)').toString('base64'),
                     senderName: from.name || from.address || 'Unknown Sender',
-                    senderEmail: from.address || 'unknown@example.com',
-                    recipientEmail: to.address || 'unknown@example.com',
+                    senderEmail: from.address,
+                    recipientEmail: to.address,
                     subject: parsedMail.subject || '(no subject)',
                     body: parsedMail.html || `<pre>${parsedMail.text || ''}</pre>`,
                     snippet: snippet,
@@ -90,7 +109,9 @@ export class ImapService {
         console.error(`Error fetching messages from ${mailboxPath}:`, err);
         // Ensure we disconnect even if there's an error
     } finally {
-        await this.disconnect();
+        if (this.client.connected) {
+            await this.disconnect();
+        }
     }
     
     // Return emails in descending order (newest first)

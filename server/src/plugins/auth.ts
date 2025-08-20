@@ -21,12 +21,21 @@ const credentialsSchema = z.object({
 
 export type Credentials = z.infer<typeof credentialsSchema>;
 
+declare module '@fastify/jwt' {
+  interface FastifyJWT {
+    payload: { user: string; data: string };
+    user: {
+      user: string;
+      data: string;
+    };
+  }
+}
+
 declare module 'fastify' {
   interface FastifyInstance {
     authenticate: (request: FastifyRequest, reply: FastifyReply) => Promise<void>;
   }
   interface FastifyRequest {
-    user: { email: string };
     credentials: Credentials;
   }
 }
@@ -35,7 +44,7 @@ async function authPluginImpl(fastify: FastifyInstance) {
   fastify.decorate('authenticate', async (request: FastifyRequest, reply: FastifyReply) => {
     try {
       await request.jwtVerify();
-      const encryptedData = (request.user as any).data;
+      const encryptedData = request.user.data;
       if (!encryptedData) {
         throw new Error('No credential data in token');
       }
@@ -44,7 +53,6 @@ async function authPluginImpl(fastify: FastifyInstance) {
       
       // Decorate request with credentials for this request lifecycle
       request.credentials = credentials;
-      request.user = { email: credentials.email };
 
     } catch (err) {
       reply.status(401).send({ message: 'Authentication failed', error: (err as Error).message });
